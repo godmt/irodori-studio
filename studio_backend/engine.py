@@ -301,11 +301,14 @@ class StudioEngine:
                 "runtime_messages": result.messages,
                 "created_at": utc_now(),
             }
-            output_path.with_suffix(".json").write_text(
+            metadata_path = output_path.with_suffix(".json")
+            metadata_path.write_text(
                 json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             with self._jobs_lock:
                 if job.cancel_requested:
+                    output_path.unlink(missing_ok=True)
+                    metadata_path.unlink(missing_ok=True)
                     job.status = "cancelled"
                     job.message = "生成完了後に破棄しました"
                 else:

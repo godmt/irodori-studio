@@ -57,6 +57,11 @@ class ProjectSaveRequest(BaseModel):
     project: dict[str, Any]
 
 
+class AudioReleaseRequest(BaseModel):
+    audio_files: list[str] = Field(default_factory=list, max_length=256)
+    project_name: str | None = Field(default=None, max_length=120)
+
+
 class RecordingDatasetCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 

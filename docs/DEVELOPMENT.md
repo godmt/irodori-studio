@@ -85,7 +85,7 @@ For changes to synthesis, voice selection, take handling or export, also run Stu
 
 Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. Add migrations or safe defaults there whenever fields change. Existing single-audio lines are migrated into `takes[0]`; keep that compatibility when editing the take model.
 
-`studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
+`studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`, including collection of every generated WAV referenced by selected and alternate takes. `studio_backend/generated_audio.py` safely removes released WAV basenames and matching JSON metadata. Line and capped-take deletion calls `/api/audio/release`; project save/delete performs the same reference-aware cleanup on the server. Never remove user-supplied reference audio, and retain generated files still referenced by another saved project. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
 
 `studio_backend/recording_datasets.py` owns named datasets under `workspace/recordings/<dataset-id>/`. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The stable dataset ID and local API list are the contract for the Training workspace. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
 
@@ -109,3 +109,5 @@ Studio follows the checked-out Irodori-TTS source rather than a vendored API sna
 4. Add tests and record the required Irodori-TTS revision in release notes.
 
 Do not silently modify the external Irodori-TTS checkout from application code. Environment synchronization belongs to the explicit setup script.
+
+`start-studio.ps1` treats the existing Irodori-TTS `.venv` as the primary backend signal. Unless `-TorchBackend` is explicitly provided, detect the installed Torch build/runtime before consulting the saved Studio configuration or hardware fallback. This prevents setup from replacing an already working CPU, CUDA, ROCm or XPU environment merely because a different accelerator is visible on the host.

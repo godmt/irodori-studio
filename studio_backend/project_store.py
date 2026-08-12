@@ -8,6 +8,29 @@ from typing import Any
 from studio_backend.exporter import safe_stem
 
 
+def project_audio_files(project: dict[str, Any] | None) -> set[str]:
+    """Return safe generated WAV basenames referenced by a project."""
+    audio_files: set[str] = set()
+    if not isinstance(project, dict):
+        return audio_files
+    for line in project.get("lines", []):
+        if not isinstance(line, dict):
+            continue
+        candidates = [line.get("audioFile")]
+        candidates.extend(
+            take.get("audioFile")
+            for take in line.get("takes", [])
+            if isinstance(take, dict)
+        )
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            name = Path(candidate).name
+            if name == candidate and Path(name).suffix.lower() == ".wav":
+                audio_files.add(name)
+    return audio_files
+
+
 class ProjectStore:
     """Atomic, server-owned persistence for Studio projects."""
 
@@ -70,9 +93,29 @@ class ProjectStore:
             self._write(path, project)
         return {"saved": True, "name": path.stem}
 
-    def delete(self, name: str) -> None:
+    def delete(self, name: str) -> dict[str, Any]:
         path = self._path(name)
         with self._lock:
             if not path.is_file():
                 raise KeyError(name)
+            try:
+                project = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                project = {}
             path.unlink()
+        return project
+
+    def referenced_audio_files(self, *, exclude_name: str | None = None) -> set[str]:
+        """Return audio still owned by saved projects other than an optional project."""
+        excluded_path = self._path(exclude_name) if exclude_name else None
+        referenced: set[str] = set()
+        with self._lock:
+            for path in self.directory.glob("*.json"):
+                if excluded_path is not None and path == excluded_path:
+                    continue
+                try:
+                    project = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                referenced.update(project_audio_files(project))
+        return referenced

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import { createLine } from "../src/defaults.js";
 import {
+  audioFilesForLine,
   appendLineTake,
   duplicateLine,
+  removedAudioFiles,
   reorderLine,
   selectLineTake,
   splitImportedText,
@@ -67,5 +69,25 @@ test("reorder and multiline import preserve expected order", () => {
   const first = createLine({ text: "一" });
   const second = createLine({ text: "二" });
   assert.deepEqual(reorderLine([first, second], second.id, -1).map((line) => line.text), ["二", "一"]);
-  assert.deepEqual(splitImportedText("甲\n\n乙\n").map((line) => line.text), ["甲", "乙"]);
+  const imported = splitImportedText("甲\n\n乙\n", { voiceId: "voice-selected" });
+  assert.deepEqual(imported.map((line) => line.text), ["甲", "乙"]);
+  assert.deepEqual(imported.map((line) => line.voiceId), ["voice-selected", "voice-selected"]);
+});
+
+test("line audio helpers include every take and report discarded files", () => {
+  const previous = createLine({
+    audioFile: "one.wav",
+    takes: [
+      { id: "take-one", audioFile: "one.wav" },
+      { id: "take-two", audioFile: "two.wav" },
+    ],
+    selectedTakeId: "take-one",
+  });
+  const next = createLine({
+    ...previous,
+    takes: [{ id: "take-two", audioFile: "two.wav" }],
+    selectedTakeId: "take-two",
+  });
+  assert.deepEqual(audioFilesForLine(previous).sort(), ["one.wav", "two.wav"]);
+  assert.deepEqual(removedAudioFiles(previous, next), ["one.wav"]);
 });

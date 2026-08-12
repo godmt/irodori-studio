@@ -62,9 +62,12 @@ import {
   insertAtSelection,
 } from "./emoji-data.js";
 import {
+  audioFilesForLine,
+  audioFilesForProject,
   duplicateLine,
   estimatedProjectSeconds,
   appendLineTake,
+  removedAudioFiles,
   selectLineTake,
   splitImportedText,
   updateLine,
@@ -647,6 +650,16 @@ function App() {
     }));
   }, [mutateProject]);
 
+  const releaseAudioFiles = useCallback(async (audioFiles, projectName = activeProjectName) => {
+    const files = [...new Set(audioFiles.filter(Boolean))];
+    if (!files.length || connection !== "online") return;
+    try {
+      await api.releaseAudio(files, projectName);
+    } catch (error) {
+      notify(`不要になった音声を削除できませんでした: ${error.message}`, "error");
+    }
+  }, [activeProjectName, connection, notify]);
+
   const rememberTextSelection = useCallback((key, element) => {
     textSelectionRef.current.set(key, {
       start: element.selectionStart,
@@ -750,6 +763,28 @@ function App() {
         const result = await submitSynthesis(buildPayload(line, voice), (job) => {
           mutateLine(lineId, { status: job.status, jobId: job.id, error: job.error || null }, false);
         });
+        const latestLine = projectRef.current.lines.find((item) => item.id === lineId);
+        if (!latestLine) {
+          await releaseAudioFiles([result.audio_file]);
+          return result;
+        }
+        const projectedLine = appendLineTake([latestLine], lineId, {
+          audioFile: result.audio_file,
+          duration: result.duration,
+          generationSeconds: result.generation_seconds,
+          usedSeed: result.used_seed,
+          jobId: result.id,
+          stale: false,
+        })[0];
+        const projectedProject = {
+          ...projectRef.current,
+          lines: projectRef.current.lines.map((item) => (
+            item.id === lineId ? projectedLine : item
+          )),
+        };
+        const retainedAudio = new Set(audioFilesForProject(projectedProject));
+        const discardedAudio = removedAudioFiles(latestLine, projectedLine)
+          .filter((audioFile) => !retainedAudio.has(audioFile));
         mutateProject((current) => ({
           ...current,
           lines: appendLineTake(current.lines, lineId, {
@@ -761,6 +796,7 @@ function App() {
             stale: false,
           }),
         }));
+        await releaseAudioFiles(discardedAudio);
         return result;
       } catch (error) {
         mutateLine(lineId, { status: "failed", error: error.message }, false);
@@ -773,7 +809,7 @@ function App() {
     } finally {
       generationPromisesRef.current.delete(lineId);
     }
-  }, [buildPayload, mutateLine, mutateProject, submitSynthesis]);
+  }, [buildPayload, mutateLine, mutateProject, releaseAudioFiles, submitSynthesis]);
 
   const regenerateLine = useCallback(async (lineId) => {
     try {
@@ -798,6 +834,13 @@ function App() {
     playbackResolveRef.current = null;
     setSpeakingLineId(null);
   }, []);
+
+  const changeLineVoice = useCallback((lineId, voiceId) => {
+    if (speakingLineId === lineId) stopPlayback();
+    setSelectedLineId(lineId);
+    setSelectedVoiceId(voiceId);
+    mutateLine(lineId, { voiceId });
+  }, [mutateLine, speakingLineId, stopPlayback]);
 
   const chooseLineTake = useCallback((lineId, takeId) => {
     if (speakingLineId === lineId) stopPlayback();
@@ -904,7 +947,7 @@ function App() {
   }, [generateLine, notify]);
 
   const addLine = useCallback((afterId = null) => {
-    const newLine = createLine();
+    const newLine = createLine({ voiceId: selectedVoiceId || projectRef.current.voices[0]?.id });
     mutateProject((current) => {
       const index = afterId ? current.lines.findIndex((line) => line.id === afterId) + 1 : current.lines.length;
       const lines = [...current.lines];
@@ -912,17 +955,30 @@ function App() {
       return { ...current, lines };
     });
     setSelectedLineId(newLine.id);
-  }, [mutateProject]);
+  }, [mutateProject, selectedVoiceId]);
 
   const removeLine = useCallback((lineId) => {
+    const currentProject = projectRef.current;
+    const removedLine = currentProject.lines.find((line) => line.id === lineId);
+    if (!removedLine || currentProject.lines.length === 1) return;
+    if (removedLine.jobId && ["queued", "running"].includes(removedLine.status)) {
+      api.cancelJob(removedLine.jobId).catch(() => {});
+    }
+    const remainingProject = {
+      ...currentProject,
+      lines: currentProject.lines.filter((line) => line.id !== lineId),
+    };
+    const retainedAudio = new Set(audioFilesForProject(remainingProject));
+    const releasedAudio = audioFilesForLine(removedLine)
+      .filter((audioFile) => !retainedAudio.has(audioFile));
     mutateProject((current) => {
-      if (current.lines.length === 1) return current;
       const index = current.lines.findIndex((line) => line.id === lineId);
       const lines = current.lines.filter((line) => line.id !== lineId);
       if (selectedLineId === lineId) setSelectedLineId(lines[Math.max(0, index - 1)]?.id || null);
       return { ...current, lines };
     });
-  }, [mutateProject, selectedLineId]);
+    releaseAudioFiles(releasedAudio);
+  }, [mutateProject, releaseAudioFiles, selectedLineId]);
 
   const handleDrop = useCallback((targetId) => {
     if (!draggedLineId || draggedLineId === targetId) return;
@@ -1072,7 +1128,11 @@ function App() {
     if (!window.confirm(`「${saved.name}」を削除しますか？\nこの操作は元に戻せません。`)) return;
     setProjectBusy(true);
     try {
+      const activeAudioFiles = saved.storage_name === activeProjectName
+        ? audioFilesForProject(projectRef.current)
+        : [];
       await api.deleteProject(saved.storage_name);
+      await releaseAudioFiles(activeAudioFiles, null);
       const remaining = await refreshProjects();
       if (saved.storage_name === activeProjectName) {
         const fresh = createDefaultProject();
@@ -1085,7 +1145,7 @@ function App() {
     } finally {
       setProjectBusy(false);
     }
-  }, [activateProject, activeProjectName, notify, refreshProjects]);
+  }, [activateProject, activeProjectName, notify, refreshProjects, releaseAudioFiles]);
 
   const exportProduction = useCallback(async () => {
     if (staleOrMissing.length) {
@@ -1309,7 +1369,7 @@ function App() {
                   <article
                     key={line.id}
                     className={`script-line ${selected ? "selected" : ""} ${speaking ? "speaking" : ""}`}
-                    onClick={() => { setSelectedLineId(line.id); setSelectedVoiceId(line.voiceId); }}
+                    onClick={() => { setSelectedLineId(line.id); setSelectedVoiceId(voice.id); }}
                     draggable
                     onDragStart={() => setDraggedLineId(line.id)}
                     onDragOver={(event) => event.preventDefault()}
@@ -1346,7 +1406,23 @@ function App() {
                         ><Smiley size={21} /></button>
                       </div>
                       <div className="line-meta">
-                        <span className="voice-chip"><i style={{ backgroundColor: voice.color }} />{voice.name}</span>
+                        <label
+                          className="voice-chip voice-chip-select"
+                          title="この行のボイスを変更"
+                          onClick={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
+                        >
+                          <i style={{ backgroundColor: voice.color }} />
+                          <select
+                            value={voice.id}
+                            aria-label={`${index + 1}行目のボイス`}
+                            disabled={line.status === "running"}
+                            onChange={(event) => changeLineVoice(line.id, event.target.value)}
+                          >
+                            {project.voices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                          </select>
+                          <CaretDown size={12} aria-hidden="true" />
+                        </label>
                         <StatusBadge line={line} />
                         {(line.takes || []).length > 1 && <div className="take-selector" role="group" aria-label={`${index + 1}行目のテイク`}>
                           <span>テイク</span>
@@ -1606,7 +1682,7 @@ function App() {
         </div>
       </Modal>}
 
-      {activeModal === "import" && <Modal title="文章を台本へ取り込む" eyebrow="TEXT IMPORT" onClose={() => setActiveModal(null)}><p className="modal-description">1行を1つの読み上げ単位として追加します。空行は無視されます。</p><textarea className="large-textarea" rows="12" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={'最初の文章を入力します。\n次の文章は改行して入力します。'} /><div className="modal-actions"><button className="secondary-button" onClick={() => setActiveModal(null)}>キャンセル</button><button className="primary-button" onClick={() => { const lines = splitImportedText(importText); if (lines.length) { mutateProject((current) => ({ ...current, lines: [...current.lines, ...lines] })); setSelectedLineId(lines[0].id); setImportText(""); setActiveModal(null); notify(`${lines.length}行を追加しました`, "success"); } }} disabled={!importText.trim()}><Plus size={19} />台本へ追加</button></div></Modal>}
+      {activeModal === "import" && <Modal title="文章を台本へ取り込む" eyebrow="TEXT IMPORT" onClose={() => setActiveModal(null)}><p className="modal-description">1行を1つの読み上げ単位として、現在のボイスで追加します。空行は無視されます。</p><textarea className="large-textarea" rows="12" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={'最初の文章を入力します。\n次の文章は改行して入力します。'} /><div className="modal-actions"><button className="secondary-button" onClick={() => setActiveModal(null)}>キャンセル</button><button className="primary-button" onClick={() => { const lines = splitImportedText(importText, { voiceId: selectedVoiceId || project.voices[0]?.id }); if (lines.length) { mutateProject((current) => ({ ...current, lines: [...current.lines, ...lines] })); setSelectedLineId(lines[0].id); setImportText(""); setActiveModal(null); notify(`${lines.length}行を追加しました`, "success"); } }} disabled={!importText.trim()}><Plus size={19} />台本へ追加</button></div></Modal>}
 
       {activeModal === "projects" && <Modal title="プロジェクト管理" eyebrow="PROJECTS" onClose={() => setActiveModal(null)} scrollable>
         <section className="project-create-panel">

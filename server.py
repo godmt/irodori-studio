@@ -42,7 +42,9 @@ from irodori_tts.inference_runtime import (
 
 from studio_backend.engine import StudioEngine
 from studio_backend.exporter import create_production_zip
+from studio_backend.generated_audio import delete_generated_audio_files
 from studio_backend.models import (
+    AudioReleaseRequest,
     DialogRequest,
     ModelLoadRequest,
     ProductionExportRequest,
@@ -52,7 +54,7 @@ from studio_backend.models import (
     TrainingJobCreateRequest,
     VoiceProfileRequest,
 )
-from studio_backend.project_store import ProjectStore
+from studio_backend.project_store import ProjectStore, project_audio_files
 from studio_backend.recording_datasets import RecordingDatasetStore
 from studio_backend.training_jobs import TrainingJobManager
 from studio_backend.voice_profiles import VoiceProfileStore, migrate_voice_profile_store
@@ -103,6 +105,14 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
+
+
+def release_generated_audio(
+    audio_files: set[str] | list[str], *, exclude_project: str | None = None
+) -> dict[str, int]:
+    """Delete unreferenced Studio-generated WAV files and their metadata sidecars."""
+    retained = project_store.referenced_audio_files(exclude_name=exclude_project)
+    return delete_generated_audio_files(AUDIO_DIR, audio_files, retained=retained)
 
 
 def _default_checkpoint() -> str:
@@ -277,6 +287,13 @@ def get_audio(audio_file: str) -> FileResponse:
     return FileResponse(path, media_type="audio/wav", filename=path.name)
 
 
+@app.post("/api/audio/release")
+def release_audio(request: AudioReleaseRequest) -> dict[str, int]:
+    return release_generated_audio(
+        request.audio_files, exclude_project=request.project_name
+    )
+
+
 @app.get("/api/projects")
 def list_projects() -> list[dict[str, Any]]:
     return project_store.list()
@@ -304,16 +321,27 @@ def load_project(project_name: str) -> dict[str, Any]:
 
 @app.post("/api/projects/save")
 def save_project(request: ProjectSaveRequest) -> dict[str, Any]:
-    return project_store.save(request.name, request.project)
+    try:
+        previous = project_store.load(request.name)
+    except KeyError:
+        previous = None
+    result = project_store.save(request.name, request.project)
+    if previous is not None:
+        released = release_generated_audio(
+            project_audio_files(previous) - project_audio_files(request.project)
+        )
+        result.update(released)
+    return result
 
 
 @app.delete("/api/projects/{project_name}")
-def delete_project(project_name: str) -> dict[str, bool]:
+def delete_project(project_name: str) -> dict[str, Any]:
     try:
-        project_store.delete(project_name)
+        deleted_project = project_store.delete(project_name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません") from exc
-    return {"deleted": True}
+    released = release_generated_audio(project_audio_files(deleted_project))
+    return {"deleted": True, **released}
 
 
 @app.get("/api/recording-datasets")

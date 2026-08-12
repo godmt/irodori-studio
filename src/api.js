@@ -42,6 +42,10 @@ export const api = {
   jobs: () => request("/api/jobs").then((response) => response.json()),
   cancelJob: (id) => request(`/api/jobs/${id}/cancel`, { method: "POST" }).then((response) => response.json()),
   cancelAll: () => request("/api/jobs/cancel-all", { method: "POST" }).then((response) => response.json()),
+  releaseAudio: (audioFiles, projectName = null) => request("/api/audio/release", {
+    method: "POST",
+    body: JSON.stringify({ audio_files: audioFiles, project_name: projectName }),
+  }).then((response) => response.json()),
   createProject: (name, project) => request("/api/projects/create", { method: "POST", body: JSON.stringify({ name, project }) }).then((response) => response.json()),
   saveProject: (name, project) => request("/api/projects/save", { method: "POST", body: JSON.stringify({ name, project }) }).then((response) => response.json()),
   projects: () => request("/api/projects").then((response) => response.json()),

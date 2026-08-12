@@ -2,6 +2,22 @@ import { createLine, createTake, moveItem } from "./defaults.js";
 
 export const MAX_LINE_TAKES = 4;
 
+export function audioFilesForLine(line) {
+  return [...new Set([
+    line?.audioFile,
+    ...(line?.takes || []).map((take) => take?.audioFile),
+  ].filter(Boolean))];
+}
+
+export function audioFilesForProject(project) {
+  return [...new Set((project?.lines || []).flatMap(audioFilesForLine))];
+}
+
+export function removedAudioFiles(previousLine, nextLine) {
+  const retained = new Set(audioFilesForLine(nextLine));
+  return audioFilesForLine(previousLine).filter((audioFile) => !retained.has(audioFile));
+}
+
 function projectSelectedTake(line, take) {
   return {
     ...line,
@@ -91,10 +107,10 @@ export function estimatedProjectSeconds(lines) {
   return lines.reduce((total, line) => total + (Number(line.duration) || 0), 0);
 }
 
-export function splitImportedText(raw) {
+export function splitImportedText(raw, lineDefaults = {}) {
   return raw
     .split(/\r?\n+/)
     .map((text) => text.trim())
     .filter(Boolean)
-    .map((text) => createLine({ text }));
+    .map((text) => createLine({ ...lineDefaults, text }));
 }

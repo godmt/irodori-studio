@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Changed Studio setup to infer the PyTorch backend from the selected Irodori-TTS `.venv`, with explicit `-TorchBackend` retained only as an override and saved configuration/hardware used as fallbacks.
+- Fixed Script voice assignment so the selected current voice is applied to new and imported lines, existing lines can change voice from their voice-name control, and the resulting audio is marked for regeneration.
+- Added lifecycle cleanup for generated Script audio and metadata when lines, discarded takes, cancelled generations, or projects are deleted, while retaining files shared by another saved project.
 - Added conservative Recorder-dataset preprocessing for training: job-local WAV copies, edge-only silence trimming with 180 ms padding, preserved internal pauses, explicit -16 dB loudness normalization, and a per-job preprocessing report.
 - Added the Training workspace with Speaker Inversion as the recommended default, optional LoRA fine-tuning, direct Recorder dataset selection, named models, background progress/cancellation, durable job history, and Studio-owned model directories.
 - Rebuilt Irodori Starter 120 as corpus v2 with 120 unique prompts, explicit Japanese mora and foreign-mora coverage, and 20 distinct fillers or backchannels; versioned prompt IDs prevent stale v1 recordings from being attached to revised text.

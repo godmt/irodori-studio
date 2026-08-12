@@ -81,6 +81,52 @@ function Invoke-Checked([string]$Command, [string[]]$Arguments, [string]$Working
     finally { Pop-Location }
 }
 
+function Get-IrodoriTorchBackend([string]$PythonPath) {
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { return $null }
+    $ErrorActionPreference = "Continue"
+    $probe = @'
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    torch_version = version('torch').lower()
+except PackageNotFoundError:
+    raise SystemExit(1)
+
+backend = None
+if '+cu128' in torch_version:
+    backend = 'cu128'
+elif '+rocm' in torch_version:
+    backend = 'rocm'
+elif '+xpu' in torch_version:
+    backend = 'xpu'
+elif '+cpu' in torch_version:
+    backend = 'cpu'
+else:
+    try:
+        import torch
+
+        if torch.version.hip:
+            backend = 'rocm'
+        elif torch.version.cuda and str(torch.version.cuda).startswith('12.8'):
+            backend = 'cu128'
+        elif getattr(torch, 'xpu', None) is not None and torch.xpu.is_available():
+            backend = 'xpu'
+        elif not torch.version.cuda:
+            backend = 'cpu'
+    except Exception:
+        pass
+
+if backend is None:
+    raise SystemExit(2)
+print(backend)
+'@
+    $detected = @(& $PythonPath -c $probe 2>$null) |
+        Where-Object { $_ -in @("cpu", "cu128", "xpu", "rocm") } |
+        Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($detected)) { return $null }
+    return [string]$detected
+}
+
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw "uv was not found. Install it from https://docs.astral.sh/uv/."
 }
@@ -90,16 +136,29 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 $config = Read-StudioConfig
 $resolvedIrodoriPath = Resolve-IrodoriRepository $config
+$irodoriPython = Join-Path $resolvedIrodoriPath ".venv\Scripts\python.exe"
 
-if (
-    [string]::IsNullOrWhiteSpace($TorchBackend) -and
-    $null -ne $config -and
-    $null -ne $config.PSObject.Properties["torchBackend"]
-) {
-    $TorchBackend = [string]$config.torchBackend
-}
 if ([string]::IsNullOrWhiteSpace($TorchBackend)) {
-    $TorchBackend = if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { "cu128" } else { "cpu" }
+    $detectedBackend = Get-IrodoriTorchBackend $irodoriPython
+    if (-not [string]::IsNullOrWhiteSpace($detectedBackend)) {
+        $TorchBackend = $detectedBackend
+        $torchBackendSource = "Irodori-TTS environment"
+    }
+    elseif (
+        $null -ne $config -and
+        $null -ne $config.PSObject.Properties["torchBackend"] -and
+        @("cpu", "cu128", "xpu", "rocm") -contains [string]$config.torchBackend
+    ) {
+        $TorchBackend = [string]$config.torchBackend
+        $torchBackendSource = "saved Studio configuration"
+    }
+    else {
+        $TorchBackend = if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { "cu128" } else { "cpu" }
+        $torchBackendSource = "detected hardware"
+    }
+}
+else {
+    $torchBackendSource = "explicit option"
 }
 
 New-Item -ItemType Directory -Force -Path $configDirectory | Out-Null
@@ -108,18 +167,8 @@ New-Item -ItemType Directory -Force -Path $configDirectory | Out-Null
     torchBackend = $TorchBackend
 } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
 
-$irodoriPython = Join-Path $resolvedIrodoriPath ".venv\Scripts\python.exe"
-$backendMatches = $false
-if (Test-Path -LiteralPath $irodoriPython -PathType Leaf) {
-    $backendProbe = switch ($TorchBackend) {
-        "cu128" { "from importlib.metadata import version; raise SystemExit(0 if '+cu128' in version('torch').lower() else 1)" }
-        "rocm" { "from importlib.metadata import version; raise SystemExit(0 if '+rocm' in version('torch').lower() else 1)" }
-        "xpu" { "from importlib.metadata import version; raise SystemExit(0 if '+xpu' in version('torch').lower() else 1)" }
-        default { "from importlib.metadata import version; v=version('torch').lower(); raise SystemExit(0 if '+cpu' in v or '+' not in v else 1)" }
-    }
-    & $irodoriPython -c $backendProbe 2>$null
-    $backendMatches = $LASTEXITCODE -eq 0
-}
+$installedBackend = Get-IrodoriTorchBackend $irodoriPython
+$backendMatches = $installedBackend -eq $TorchBackend
 if ($ForceSync -or -not $backendMatches) {
     Write-Host "[setup] Syncing the Irodori-TTS environment ($TorchBackend)" -ForegroundColor Cyan
     Invoke-Checked "uv" @("sync", "--project", $resolvedIrodoriPath, "--extra", $TorchBackend) $resolvedIrodoriPath
@@ -161,7 +210,7 @@ if ($needsBuild) {
 }
 
 Write-Host "[setup] Irodori-TTS: $resolvedIrodoriPath" -ForegroundColor Green
-Write-Host "[setup] PyTorch backend: $TorchBackend" -ForegroundColor Green
+Write-Host "[setup] PyTorch backend: $TorchBackend ($torchBackendSource)" -ForegroundColor Green
 if ($SetupOnly) {
     Write-Host "[setup] Complete. Use .\start-studio.ps1 for future launches." -ForegroundColor Green
     exit 0
