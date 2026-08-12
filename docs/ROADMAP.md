@@ -10,20 +10,20 @@ Irodori Studio is intended to become a local end-to-end environment with three p
 - Continuous playback and production export
 - Live queue and VOICEVOX-compatible external integration
 
-## Recorder — planned
+## Recorder — implemented
 
-Integrate the existing offline corpus-recorder concept as a first-class tab rather than an iframe or separate hosted site.
+The existing Irodori-TTS offline corpus recorder is integrated as a first-class Studio workspace rather than an iframe or separate application.
 
-Expected scope:
+Current scope:
 
 - Sequential reading prompts and acting direction
 - Automatic microphone permission and device refresh
 - Record, stop, review, redo and progress navigation
-- Local browser storage with no server transfer
-- Partial or complete ZIP export compatible with Irodori dataset preparation
-- Importing the resulting corpus into the Training workspace
+- Named local datasets under `workspace/recordings/`
+- Automatic accepted-only training manifests without a manual export step
+- Stable dataset IDs that the Training workspace can select directly
 
-The public static recorder can remain a separately deployable build, but shared prompt schemas and validation should move into reusable modules.
+The Recorder UI, audio conversion and device discovery live under `src/features/recorder`; server-owned dataset persistence lives in `studio_backend/recording_datasets.py`. The official 120-prompt starter corpus is versioned with Studio so recording remains available without running the external Irodori-TTS frontend.
 
 ## Training — planned
 
@@ -31,7 +31,7 @@ Provide guided local workflows around the external Irodori-TTS checkout.
 
 Expected scope:
 
-- Import recorder ZIP or one/multiple long single-speaker recordings
+- Select a Studio recording dataset or add one/multiple long single-speaker recordings
 - Automated resampling, denoise checks, silence segmentation and transcription
 - Dataset validation and a small exception queue rather than full manual labeling
 - Speaker Inversion setup, progress, checkpoints and comparison playback

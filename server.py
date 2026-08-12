@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import socket
 import sys
@@ -28,7 +30,7 @@ if str(IRODORI_ROOT) not in sys.path:
     sys.path.insert(0, str(IRODORI_ROOT))
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,10 +47,12 @@ from studio_backend.models import (
     ModelLoadRequest,
     ProductionExportRequest,
     ProjectSaveRequest,
+    RecordingDatasetCreateRequest,
     SynthesisPayload,
     VoiceProfileRequest,
 )
 from studio_backend.project_store import ProjectStore
+from studio_backend.recording_datasets import RecordingDatasetStore
 from studio_backend.voice_profiles import VoiceProfileStore, migrate_voice_profile_store
 from studio_backend.voicevox_api import create_voicevox_app
 
@@ -56,15 +60,17 @@ WORKSPACE = STUDIO_ROOT / "workspace"
 AUDIO_DIR = WORKSPACE / "audio"
 EXPORT_DIR = WORKSPACE / "exports"
 PROJECT_DIR = WORKSPACE / "projects"
+RECORDING_DIR = WORKSPACE / "recordings"
 VOICEVOX_DIR = WORKSPACE / "voicevox"
 VOICE_DIR = WORKSPACE / "voices"
-for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, VOICEVOX_DIR, VOICE_DIR):
+for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, RECORDING_DIR, VOICEVOX_DIR, VOICE_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 migrate_voice_profile_store(VOICEVOX_DIR / "profiles.json", VOICE_DIR / "profiles.json")
 
 engine = StudioEngine(audio_dir=AUDIO_DIR)
 project_store = ProjectStore(PROJECT_DIR)
+recording_dataset_store = RecordingDatasetStore(RECORDING_DIR)
 voice_profile_store = VoiceProfileStore(VOICE_DIR / "profiles.json")
 voicevox_app = create_voicevox_app(engine=engine, profile_store=voice_profile_store)
 voicevox_runtime: dict[str, Any] = {
@@ -144,6 +150,7 @@ def bootstrap() -> dict[str, Any]:
         "assets": _asset_scan(),
         "model": engine.status(),
         "voice_profiles": voice_profile_store.list(),
+        "recording_datasets": recording_dataset_store.list(),
         "voicevox_api": dict(voicevox_runtime),
         "irodori_root": str(IRODORI_ROOT),
     }
@@ -276,6 +283,70 @@ def delete_project(project_name: str) -> dict[str, bool]:
         project_store.delete(project_name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="プロジェクトが見つかりません") from exc
+    return {"deleted": True}
+
+
+@app.get("/api/recording-datasets")
+def list_recording_datasets() -> list[dict[str, Any]]:
+    return recording_dataset_store.list()
+
+
+@app.post("/api/recording-datasets")
+def create_recording_dataset(
+    request: RecordingDatasetCreateRequest,
+) -> dict[str, Any]:
+    try:
+        return recording_dataset_store.create(request.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/recording-datasets/{dataset_id}")
+def load_recording_dataset(dataset_id: str) -> dict[str, Any]:
+    try:
+        return recording_dataset_store.load(dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="録音データセットを開けませんでした") from exc
+
+
+@app.post("/api/recording-datasets/{dataset_id}/recordings/{prompt_id}")
+async def save_dataset_recording(
+    dataset_id: str,
+    prompt_id: str,
+    request: Request,
+    recording_metadata: str = Header(alias="X-Irodori-Recording-Metadata"),
+) -> dict[str, Any]:
+    try:
+        wav_bytes = await request.body()
+        if len(wav_bytes) > 256 * 1024 * 1024:
+            raise ValueError("録音ファイルが大きすぎます")
+        metadata = json.loads(base64.b64decode(recording_metadata).decode("utf-8"))
+        return recording_dataset_store.save_recording(
+            dataset_id, prompt_id, wav_bytes, metadata
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except (binascii.Error, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/recording-datasets/{dataset_id}/audio/{prompt_id}")
+def get_dataset_recording_audio(dataset_id: str, prompt_id: str) -> FileResponse:
+    try:
+        path = recording_dataset_store.audio_path(dataset_id, prompt_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音音声が見つかりません") from exc
+    return FileResponse(path, media_type="audio/wav", filename=path.name)
+
+
+@app.delete("/api/recording-datasets/{dataset_id}")
+def delete_recording_dataset(dataset_id: str) -> dict[str, bool]:
+    try:
+        recording_dataset_store.delete(dataset_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
     return {"deleted": True}
 
 

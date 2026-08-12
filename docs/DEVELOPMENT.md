@@ -6,7 +6,7 @@ Irodori Studio owns the product experience and local orchestration. Irodori-TTS 
 
 | Repository | Responsibility |
 | --- | --- |
-| `irodori-studio` | React SPA, local FastAPI host, synthesis queue, project data, exports, VOICEVOX compatibility, future Recorder and Training workflows |
+| `irodori-studio` | React SPA, local FastAPI host, synthesis queue, project data, recording, exports, VOICEVOX compatibility and the future Training workflow |
 | `Irodori-TTS` | model architecture, inference runtime, codec, Speaker Inversion, LoRA and training implementation |
 
 Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, or user-specific absolute paths into this repository.
@@ -18,7 +18,8 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - `StudioEngine` owns one resident `IrodoriInferenceRuntime` and one FIFO generation worker.
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
 - The frontend communicates only with the local Studio HTTP API.
-- Generated files, server-saved projects and the shared voice library live under ignored `workspace/`.
+- Recorder microphone capture happens in the browser, then accepted and review recordings are saved through the local Studio HTTP API under ignored `workspace/recordings/`.
+- Generated files, server-saved projects, named recording datasets and the shared voice library live under ignored `workspace/`.
 
 ## Source map
 
@@ -30,11 +31,13 @@ src/
   project-state.js       Pure line, take and ordering operations
   emoji-data.js          Official Irodori performance emoji metadata
   voice-library.js       Server profile/project voice reconciliation and payload mapping
+  features/recorder/     Corpus UI, microphone capture, WAV conversion and named dataset management
 studio_backend/
   engine.py              Resident runtime and FIFO synthesis queue
   models.py              HTTP request schemas
   exporter.py            WAV/subtitle/timeline production ZIP
   project_store.py       Atomic local project persistence
+  recording_datasets.py Named recording datasets and training-ready manifests
   voice_profiles.py      Shared Voice Library and stable VOICEVOX speaker/style persistence
   voicevox_api.py        Compatibility endpoints
   runtime_paths.py       External Irodori-TTS discovery and validation
@@ -80,6 +83,8 @@ For changes to synthesis, voice selection, take handling or export, also run Stu
 Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. Add migrations or safe defaults there whenever fields change. Existing single-audio lines are migrated into `takes[0]`; keep that compatibility when editing the take model.
 
 `studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
+
+`studio_backend/recording_datasets.py` owns named datasets under `workspace/recordings/<dataset-id>/`. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The stable dataset ID and local API list are the contract for the Training workspace. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
 
 Server-saved voice profiles under `workspace/voices/profiles.json` are the source of truth for the shared Voice Library and require stable `profile_id`, `speaker_uuid` and `style_id`. Projects retain a compatible snapshot plus the profile ID. Reconcile by ID on load; only use a unique exact-name match to migrate legacy projects. Do not regenerate stable IDs during ordinary edits. The legacy `workspace/voicevox/profiles.json` is copied once when the shared store does not yet exist.
 

@@ -2,7 +2,7 @@ async function request(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     headers: {
-      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(options.body instanceof FormData || options.body instanceof Blob ? {} : { "Content-Type": "application/json" }),
       ...(options.headers || {}),
     },
   });
@@ -17,6 +17,15 @@ async function request(path, options = {}) {
     throw new Error(message);
   }
   return response;
+}
+
+function encodeJsonHeader(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x4000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x4000));
+  }
+  return btoa(binary);
 }
 
 export const api = {
@@ -38,6 +47,18 @@ export const api = {
   projects: () => request("/api/projects").then((response) => response.json()),
   loadProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`).then((response) => response.json()),
   deleteProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" }).then((response) => response.json()),
+  recordingDatasets: () => request("/api/recording-datasets").then((response) => response.json()),
+  createRecordingDataset: (name) => request("/api/recording-datasets", { method: "POST", body: JSON.stringify({ name }) }).then((response) => response.json()),
+  recordingDataset: (id) => request(`/api/recording-datasets/${encodeURIComponent(id)}`).then((response) => response.json()),
+  saveDatasetRecording: (datasetId, promptId, blob, metadata) => request(`/api/recording-datasets/${encodeURIComponent(datasetId)}/recordings/${encodeURIComponent(promptId)}`, {
+    method: "POST",
+    body: blob,
+    headers: {
+      "Content-Type": "audio/wav",
+      "X-Irodori-Recording-Metadata": encodeJsonHeader(metadata),
+    },
+  }).then((response) => response.json()),
+  deleteRecordingDataset: (id) => request(`/api/recording-datasets/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
   dialog: (kind, multiple = false) => request("/api/dialog", { method: "POST", body: JSON.stringify({ kind, multiple }) }).then((response) => response.json()),
   exportProject: async (payload) => {
     const response = await request("/api/export", { method: "POST", body: JSON.stringify(payload) });
@@ -48,3 +69,4 @@ export const api = {
 };
 
 export const audioUrl = (audioFile) => `/api/audio/${encodeURIComponent(audioFile)}`;
+export const datasetRecordingUrl = (datasetId, promptId) => `/api/recording-datasets/${encodeURIComponent(datasetId)}/audio/${encodeURIComponent(promptId)}`;

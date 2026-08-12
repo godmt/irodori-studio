@@ -31,4 +31,4 @@ These remain external or ignored. Studio discovers model and training assets fro
 
 Continue Studio changes in this repository. Changes to model architecture, inference primitives, Speaker Inversion or LoRA training belong upstream in Irodori-TTS. When work crosses the boundary, implement a narrow adapter in Studio and document the minimum compatible Irodori-TTS revision.
 
-The next planned structural change is introducing Recorder and Training as top-level workspaces. See `ROADMAP.md` before moving the current `App.jsx`; project hydration and Voice Library persistence must remain backward compatible during that refactor.
+Recorder is now a top-level workspace implemented under `src/features/recorder` without changing project hydration or Voice Library persistence. Training is the next planned workspace; see `ROADMAP.md` before adding its orchestration and keep the external Irodori-TTS repository boundary intact.

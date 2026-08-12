@@ -75,6 +75,7 @@ import {
   voiceToProfilePayload,
   VOICE_COLORS,
 } from "./voice-library.js";
+import { RecorderWorkspace } from "./features/recorder/RecorderWorkspace.jsx";
 
 const STORAGE_KEY = "irodori-studio-project-v1";
 const PLAYBACK_VOLUME_KEY = "irodori-studio-playback-volume-v2";
@@ -263,6 +264,7 @@ function App() {
   const [project, setProject] = useState(loadLocalProject);
   const [selectedLineId, setSelectedLineId] = useState(() => project.lines[0]?.id || null);
   const [view, setView] = useState("script");
+  const [recorderRecording, setRecorderRecording] = useState(false);
   const [model, setModel] = useState({ loaded: false });
   const [bootstrap, setBootstrap] = useState(null);
   const [modelSettings, setModelSettings] = useState({
@@ -1232,19 +1234,22 @@ function App() {
           <div><strong>Irodori Studio</strong><small>LOCAL PRODUCTION CONSOLE</small></div>
         </div>
         <nav className="view-switcher" aria-label="制作モード">
-          <button className={view === "script" ? "active" : ""} onClick={() => setView("script")}><FileText size={18} />台本制作</button>
-          <button className={view === "live" ? "active" : ""} onClick={() => setView("live")}><Broadcast size={18} />配信コンソール</button>
+          <button className={view === "script" ? "active" : ""} onClick={() => setView("script")} disabled={recorderRecording}><FileText size={18} />台本制作</button>
+          <button className={view === "live" ? "active" : ""} onClick={() => setView("live")} disabled={recorderRecording}><Broadcast size={18} />配信コンソール</button>
+          <button className={view === "recorder" ? "active" : ""} onClick={() => setView("recorder")}><MicrophoneStage size={18} />録音</button>
         </nav>
         <div className="top-actions">
-          <button className={`model-pill ${model.loaded ? "loaded" : ""}`} onClick={() => setActiveModal("model")}>
-            <span className="model-state" />
-            <span><small>{connection === "offline" ? "API OFFLINE" : model.loaded ? "MODEL READY" : "MODEL OFF"}</small><strong>{model.loaded ? model.name : "モデルをロード"}</strong></span>
-            <CaretDown size={16} />
-          </button>
-          <span className="queue-indicator"><Queue size={18} /><strong>{queueCount}</strong></span>
-          <IconButton label="プロジェクト管理" onClick={openProjectsModal}><FolderOpen size={20} /></IconButton>
-          <IconButton label="プロジェクトを保存" onClick={saveProject}><FloppyDisk size={20} /></IconButton>
-          <button className="primary-compact" onClick={() => setActiveModal("export")}><Export size={19} />書き出し</button>
+          {view === "recorder" ? <span className="recorder-local-pill"><HardDrive size={18} /><span><small>RECORDING DATASETS</small><strong>{recorderRecording ? "録音中 · 画面を固定" : "Studioに自動保存"}</strong></span></span> : <>
+            <button className={`model-pill ${model.loaded ? "loaded" : ""}`} onClick={() => setActiveModal("model")}>
+              <span className="model-state" />
+              <span><small>{connection === "offline" ? "API OFFLINE" : model.loaded ? "MODEL READY" : "MODEL OFF"}</small><strong>{model.loaded ? model.name : "モデルをロード"}</strong></span>
+              <CaretDown size={16} />
+            </button>
+            <span className="queue-indicator"><Queue size={18} /><strong>{queueCount}</strong></span>
+            <IconButton label="プロジェクト管理" onClick={openProjectsModal}><FolderOpen size={20} /></IconButton>
+            <IconButton label="プロジェクトを保存" onClick={saveProject}><FloppyDisk size={20} /></IconButton>
+            <button className="primary-compact" onClick={() => setActiveModal("export")}><Export size={19} />書き出し</button>
+          </>}
         </div>
       </header>
 
@@ -1379,7 +1384,7 @@ function App() {
             </div>
           </section>
         </main>
-      ) : (
+      ) : view === "live" ? (
         <main className="live-workspace">
           <section className="live-console">
             <div className="live-header">
@@ -1443,6 +1448,13 @@ function App() {
             <div className="system-card"><h3>エンジン</h3><p><Cpu size={18} />{model.cuda?.name || model.model_device || "未接続"}</p><p><HardDrive size={18} />{model.cuda ? `${model.cuda.allocated_gb} GB 使用中` : "GPU情報なし"}</p><p><Queue size={18} />{queueCount}件を処理中</p></div>
           </aside>
         </main>
+      ) : (
+        <RecorderWorkspace
+          notify={notify}
+          onRecordingStateChange={setRecorderRecording}
+          playbackVolume={playbackVolume}
+          outputDeviceId={audioOutputPreference.deviceId}
+        />
       )}
 
       {view === "script" && selectedLine && (

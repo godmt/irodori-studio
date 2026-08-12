@@ -57,6 +57,10 @@ class ProjectSaveRequest(BaseModel):
     project: dict[str, Any]
 
 
+class RecordingDatasetCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class ExportSegment(BaseModel):
     id: str
     text: str

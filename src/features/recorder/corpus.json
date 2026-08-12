@@ -1,0 +1,1762 @@
+[
+  {
+    "id": "irodori_v2_0001",
+    "text": "赤い傘を開いて、駅までゆっくり歩いた。",
+    "direction": "自然体で落ち着いて話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "母音",
+      "カ行",
+      "サ行",
+      "促音",
+      "長短対比"
+    ]
+  },
+  {
+    "id": "irodori_v2_0002",
+    "text": "朝の空気は冷たいけれど、光はやわらかい。",
+    "direction": "情景を描くように穏やかに読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "母音",
+      "ハ行",
+      "ラ行",
+      "無声化"
+    ]
+  },
+  {
+    "id": "irodori_v2_0003",
+    "text": "黄色い花が、風に揺れていました。",
+    "direction": "丁寧で明瞭に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3,
+    "coverageTags": [
+      "ヤ行",
+      "ハ行",
+      "ガ行",
+      "ワ行"
+    ]
+  },
+  {
+    "id": "irodori_v2_0004",
+    "text": "上の棚に、小さな箱を置いておくね。",
+    "direction": "親しい相手へ自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.1,
+    "coverageTags": [
+      "母音",
+      "タ行",
+      "ハ行",
+      "連母音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0005",
+    "text": "遠い丘から、大きな鐘の音が聞こえる。",
+    "direction": "静かな余韻を残して読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "母音",
+      "カ行",
+      "撥音",
+      "長母音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0006",
+    "text": "かきくけこ、と声に出して確かめよう。",
+    "direction": "発音を確かめるようにはっきり話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.2,
+    "coverageTags": [
+      "カ行",
+      "五母音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0007",
+    "text": "さしすせそを、少しずつ滑らかに言います。",
+    "direction": "教材を読むように丁寧に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "サ行",
+      "シャ行",
+      "濁音",
+      "無声化"
+    ]
+  },
+  {
+    "id": "irodori_v2_0008",
+    "text": "たちつてと、と続けたところで息を吸った。",
+    "direction": "自然な速度で明瞭に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "タ行",
+      "チ音",
+      "ツ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0009",
+    "text": "なにぬねの、と並べると不思議に聞こえるね。",
+    "direction": "少し面白がりながら自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "ナ行",
+      "五母音",
+      "撥音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0010",
+    "text": "母はほほえみ、ふわりと布を広げた。",
+    "direction": "やさしい物語調で読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "ハ行",
+      "フ音",
+      "ワ行",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0011",
+    "text": "まみむめも、まだ全部覚えているよ。",
+    "direction": "思い出すように軽く話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.1,
+    "coverageTags": [
+      "マ行",
+      "五母音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0012",
+    "text": "屋根の雪がやみ、夕焼けが見えました。",
+    "direction": "落ち着いた丁寧な口調で話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "ヤ行",
+      "マ行",
+      "ガ行",
+      "長母音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0013",
+    "text": "料理を選ぶなら、色や香りも比べてみよう。",
+    "direction": "提案するように明るく話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "ラ行",
+      "ヤ行",
+      "バ行",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0014",
+    "text": "私は庭で、若い若葉を眺めています。",
+    "direction": "静かで丁寧な口調で話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.2,
+    "coverageTags": [
+      "ワ行",
+      "ヤ行",
+      "濁音",
+      "連母音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0015",
+    "text": "がぎぐげごの順で、濁った響きを確認した。",
+    "direction": "確認事項を端的に読み上げる",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "ガ行",
+      "濁音",
+      "撥音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0016",
+    "text": "ざじずぜぞって、続けて言うと難しいね。",
+    "direction": "少し苦笑しながら自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "ザ行",
+      "濁音",
+      "促音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0017",
+    "text": "だぢづでどを含む言葉は、丁寧に選びます。",
+    "direction": "一音ずつ意識して丁寧に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "ダ行",
+      "ヂ音",
+      "ヅ音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0018",
+    "text": "ばびぶべぼと、ぱぴぷぺぽを聞き分けて。",
+    "direction": "聞き分けを促すようにはっきり話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "バ行",
+      "パ行",
+      "濁音",
+      "半濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0019",
+    "text": "きゃくは急きょ、九曲目を聴くことにした。",
+    "direction": "一定の速さで明瞭に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "キャ行",
+      "キュ音",
+      "キョ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0020",
+    "text": "逆光の漁港で、牛乳パックをぎゅっと握った。",
+    "direction": "情景を自然な抑揚で読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.2,
+    "coverageTags": [
+      "ギャ音",
+      "ギュ音",
+      "ギョ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0021",
+    "text": "写真集を見たら、初夏の景色が恋しくなった。",
+    "direction": "懐かしそうに自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "シャ行",
+      "シュ音",
+      "ショ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0022",
+    "text": "じゃあ、十時に屋上で集合しよう。",
+    "direction": "友人と約束するように軽快に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 2.9,
+    "coverageTags": [
+      "ジャ行",
+      "ジュ音",
+      "ジョ音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0023",
+    "text": "茶色い蝶が、昼食のパンに近づいた。",
+    "direction": "出来事を淡々と描写する",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "チャ行",
+      "チュ音",
+      "チョ音",
+      "半濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0024",
+    "text": "入場口で、女房役の子がにゃあと猫まねをした。",
+    "direction": "自然体で少しやさしく話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.9,
+    "coverageTags": [
+      "ニャ音",
+      "ニュ音",
+      "ニョ音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0025",
+    "text": "ヒュウガの百貨店で、ひゅうっと冷える氷菓を買った。",
+    "direction": "標準的な速さで明瞭に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.5,
+    "coverageTags": [
+      "ヒャ音",
+      "ヒュ音",
+      "ヒョ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0026",
+    "text": "病院のビュッフェで、白夜の写真を見た。",
+    "direction": "静かな声量で落ち着いて話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "ビャ音",
+      "ビュ音",
+      "ビョ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0027",
+    "text": "子猫がぴゃっと逃げ、風はぴゅうと鳴り、カエルがぴょんと跳ねた。",
+    "direction": "動きを感じさせる自然な調子で読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 6.2,
+    "coverageTags": [
+      "ピャ音",
+      "ピュ音",
+      "ピョ音",
+      "半濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0028",
+    "text": "脈を測る医師は、ミュート中の妙な音に気づいた。",
+    "direction": "出来事を落ち着いて描写する",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.6,
+    "coverageTags": [
+      "ミャ音",
+      "ミュ音",
+      "ミョ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0029",
+    "text": "略図を見ながら、流域の両岸を説明します。",
+    "direction": "案内役のように明瞭に説明する",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "リャ音",
+      "リュ音",
+      "リョ音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0030",
+    "text": "百貨店の客が、三脚をきちんと畳んだ。",
+    "direction": "標準的な速さで明瞭に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.2,
+    "coverageTags": [
+      "複合拗音",
+      "キャ行",
+      "ヒャ行",
+      "撥音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0031",
+    "text": "ちょっと待って、切符をポケットに入れるから。",
+    "direction": "相手を呼び止めるように自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.9,
+    "coverageTags": [
+      "促音",
+      "チョ音",
+      "半濁音",
+      "外来語"
+    ]
+  },
+  {
+    "id": "irodori_v2_0032",
+    "text": "きっと今晩は、みんなで温泉に入れるよ。",
+    "direction": "期待を込めて明るく話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "促音",
+      "撥音",
+      "濁音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0033",
+    "text": "新幹線の案内板を、慎重に確認してください。",
+    "direction": "駅の案内のように明瞭に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "撥音",
+      "長音",
+      "促音",
+      "敬語"
+    ]
+  },
+  {
+    "id": "irodori_v2_0034",
+    "text": "コーヒーとケーキを、テーブルへ運びましょう。",
+    "direction": "店員のように穏やかに提案する",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.1,
+    "coverageTags": [
+      "長音",
+      "外来語",
+      "半濁音",
+      "ショ音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0035",
+    "text": "姉さんは映画を見て、お父さんは本を読んだ。",
+    "direction": "家庭の様子を自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "長母音",
+      "撥音",
+      "母音連続",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0036",
+    "text": "スーパーのセールで、チーズを二つ買ったよ。",
+    "direction": "買い物の報告を気軽に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.8,
+    "coverageTags": [
+      "長音",
+      "外来語",
+      "ツ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0037",
+    "text": "ファイルをフォルダーへ移し、フェンスを閉めた。",
+    "direction": "作業手順を落ち着いて話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.1,
+    "coverageTags": [
+      "ファ行",
+      "外来語",
+      "撥音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0038",
+    "text": "ウィンドウのウェブ表示を、ワイドに変更します。",
+    "direction": "操作方法を明瞭に説明する",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.3,
+    "coverageTags": [
+      "ウィ音",
+      "ウェ音",
+      "外来語",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0039",
+    "text": "シェフがジェラートとチェリーを皿に盛った。",
+    "direction": "軽やかなナレーション調で読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.1,
+    "coverageTags": [
+      "シェ音",
+      "ジェ音",
+      "チェ音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0040",
+    "text": "ティーカップの隣に、ディスクとデュエット譜がある。",
+    "direction": "外来語を区切りながら明瞭に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.5,
+    "coverageTags": [
+      "ティ音",
+      "ディ音",
+      "デュ音",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0041",
+    "text": "ヴァイオリンの動画を、ボリュームを下げて見た。",
+    "direction": "普段の会話として自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.1,
+    "coverageTags": [
+      "ヴ音",
+      "外来語",
+      "長音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0042",
+    "text": "ツァーリの肖像と、クォーツの飾りが並んでいる。",
+    "direction": "展示解説のように落ち着いて読む",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.6,
+    "coverageTags": [
+      "ツァ音",
+      "クォ音",
+      "外来語",
+      "撥音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0043",
+    "text": "今日は二千二十六年八月十二日、水曜日です。",
+    "direction": "日付を一語ずつ明瞭に案内する",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "数字",
+      "年",
+      "月日",
+      "曜日"
+    ]
+  },
+  {
+    "id": "irodori_v2_0044",
+    "text": "集合は午前九時十五分、出発は九時半だよ。",
+    "direction": "予定を確認するように自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "時刻",
+      "数字",
+      "撥音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0045",
+    "text": "合計は三千四百五十円で、お釣りは五百円です。",
+    "direction": "金額を間違えないよう明瞭に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.1,
+    "coverageTags": [
+      "金額",
+      "数字",
+      "拗音",
+      "撥音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0046",
+    "text": "この箱は縦十二センチ、横八点五センチです。",
+    "direction": "寸法を正確に読み上げる",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "小数",
+      "単位",
+      "数字",
+      "促音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0047",
+    "text": "気温はマイナス三度、湿度は六十八パーセントです。",
+    "direction": "気象情報のように端正に読む",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.5,
+    "coverageTags": [
+      "負数",
+      "単位",
+      "数字",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0048",
+    "text": "時速六十キロで、約二点三キロ進みました。",
+    "direction": "計測結果を淡々と読み上げる",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "速度",
+      "小数",
+      "距離",
+      "数字"
+    ]
+  },
+  {
+    "id": "irodori_v2_0049",
+    "text": "一個、二本、三枚、四冊を順番に並べて。",
+    "direction": "作業を頼むように自然に話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.5,
+    "coverageTags": [
+      "助数詞",
+      "数字",
+      "促音",
+      "撥音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0050",
+    "text": "七月二十四日まで、あと十一日あります。",
+    "direction": "日程を確認するように落ち着いて話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.4,
+    "coverageTags": [
+      "日付",
+      "数字",
+      "促音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0051",
+    "text": "この鍵、どこに置いたか覚えてる？",
+    "direction": "身近な相手へ軽く尋ねる",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 2.9,
+    "coverageTags": [
+      "疑問文",
+      "上昇調",
+      "濁音",
+      "母音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0052",
+    "text": "えっ、もう準備が終わったの？",
+    "direction": "軽く驚きながら問いかける",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 2.5,
+    "coverageTags": [
+      "感嘆文",
+      "疑問文",
+      "促音",
+      "拗音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0053",
+    "text": "わあ、窓から虹が二本も見えるよ！",
+    "direction": "素直な喜びと驚きを込めて話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 2.9,
+    "coverageTags": [
+      "感嘆文",
+      "長母音",
+      "撥音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0054",
+    "text": "恐れ入りますが、こちらへご記入いただけますか。",
+    "direction": "受付係のように控えめで丁寧に話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.3,
+    "coverageTags": [
+      "疑問文",
+      "敬語",
+      "長音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0055",
+    "text": "雨がやんだため、予定どおり試合を始めます。",
+    "direction": "正式な案内として落ち着いて話す",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4,
+    "coverageTags": [
+      "説明文",
+      "因果",
+      "撥音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0056",
+    "text": "蓋を右へ回すと、中の空気がゆっくり抜けます。",
+    "direction": "手順をわかりやすく説明する",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.4,
+    "coverageTags": [
+      "説明文",
+      "条件表現",
+      "促音",
+      "濁音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0057",
+    "text": "川沿いの道は狭いので、自転車では注意が必要だ。",
+    "direction": "注意事項を冷静に読み上げる",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.6,
+    "coverageTags": [
+      "説明文",
+      "理由表現",
+      "拗音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0058",
+    "text": "雲の切れ間から月が現れ、静かな湖を照らした。",
+    "direction": "静かな情景をゆったり描写する",
+    "category": "phonetic",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.4,
+    "coverageTags": [
+      "描写文",
+      "母音",
+      "濁音",
+      "ラ行"
+    ]
+  },
+  {
+    "id": "irodori_v2_0059",
+    "text": "もし道に迷ったら、角の交番で聞いてみて。",
+    "direction": "親切に助言するように話す",
+    "category": "phonetic",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 3.6,
+    "coverageTags": [
+      "条件表現",
+      "促音",
+      "撥音",
+      "長音"
+    ]
+  },
+  {
+    "id": "irodori_v2_0060",
+    "text": "まず材料を混ぜ、弱火で五分ほど温めてください。",
+    "direction": "料理手順を丁寧で明瞭に説明する",
+    "category": "phonetic",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "expectedSeconds": 4.3,
+    "coverageTags": [
+      "手順文",
+      "数字",
+      "濁音",
+      "敬語"
+    ]
+  },
+  {
+    "id": "irodori_v2_0061",
+    "text": "やった、ずっと楽しみにしていた知らせが届いたよ！",
+    "direction": "喜びが一気にあふれ、明るく弾む声で話す",
+    "category": "emotion_specific",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "high",
+    "expectedSeconds": 4.3
+  },
+  {
+    "id": "irodori_v2_0062",
+    "text": "今日はいいことが続いて、なんだか空まで明るく見えるね。",
+    "direction": "満ち足りた喜びを感じながら、軽やかに話す",
+    "category": "emotion_specific",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "medium",
+    "expectedSeconds": 4.8
+  },
+  {
+    "id": "irodori_v2_0063",
+    "text": "みんなで笑っていると、この時間がずっと続けばいいって思う。",
+    "direction": "穏やかな幸福感を込め、親しい相手へ温かく話す",
+    "category": "emotion_specific",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "low",
+    "expectedSeconds": 5.2
+  },
+  {
+    "id": "irodori_v2_0064",
+    "text": "もう会えないと思うと、胸の奥が静かに痛むんだ。",
+    "direction": "深い悲しみを抑えながら、低く弱い声で話す",
+    "category": "emotion_specific",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "high",
+    "expectedSeconds": 4.9
+  },
+  {
+    "id": "irodori_v2_0065",
+    "text": "楽しみにしていたのに、今日は中止になってしまったんだね。",
+    "direction": "落胆をにじませ、力の抜けた静かな声で話す",
+    "category": "emotion_specific",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "medium",
+    "expectedSeconds": 6
+  },
+  {
+    "id": "irodori_v2_0066",
+    "text": "平気だよって笑ったけれど、本当は少し寂しかった。",
+    "direction": "隠しきれない寂しさを込め、控えめに話す",
+    "category": "emotion_specific",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "low",
+    "expectedSeconds": 5.1
+  },
+  {
+    "id": "irodori_v2_0067",
+    "text": "何度も確認したのに、どうして勝手に変えたの？",
+    "direction": "強い怒りを正面から示し、鋭くはっきり話す",
+    "category": "emotion_specific",
+    "style": "dissatisfied",
+    "emotion": "anger",
+    "intensity": "high",
+    "expectedSeconds": 3.9
+  },
+  {
+    "id": "irodori_v2_0068",
+    "text": "約束したことくらい、最後まできちんと守ってよ。",
+    "direction": "不満を抑えきれず、強めの口調で話す",
+    "category": "emotion_specific",
+    "style": "dissatisfied",
+    "emotion": "anger",
+    "intensity": "medium",
+    "expectedSeconds": 4.1
+  },
+  {
+    "id": "irodori_v2_0069",
+    "text": "そういう言い方をされると、さすがに私も困るよ。",
+    "direction": "苛立ちを抑え、冷静さを残した硬い声で話す",
+    "category": "emotion_specific",
+    "style": "dissatisfied",
+    "emotion": "anger",
+    "intensity": "low",
+    "expectedSeconds": 4.1
+  },
+  {
+    "id": "irodori_v2_0070",
+    "text": "えっ、まさかこんなところで会えるなんて思わなかった！",
+    "direction": "予想外の再会に驚き、明るく大きく反応する",
+    "category": "emotion_specific",
+    "style": "surprised",
+    "emotion": "surprise",
+    "intensity": "high",
+    "expectedSeconds": 4.7
+  },
+  {
+    "id": "irodori_v2_0071",
+    "text": "あれ、さっきまでここにあった鍵がなくなってる。",
+    "direction": "突然の変化に戸惑い、周囲を探すように話す",
+    "category": "emotion_specific",
+    "style": "surprised",
+    "emotion": "surprise",
+    "intensity": "medium",
+    "expectedSeconds": 4.1
+  },
+  {
+    "id": "irodori_v2_0072",
+    "text": "本当にこの小さな箱に、全部入っているの？",
+    "direction": "意外さを感じながら、半信半疑で問いかける",
+    "category": "emotion_specific",
+    "style": "surprised",
+    "emotion": "surprise",
+    "intensity": "low",
+    "expectedSeconds": 3.6
+  },
+  {
+    "id": "irodori_v2_0073",
+    "text": "待って、今すぐ後ろで何かが動いた気がする。",
+    "direction": "身近な気配におびえ、息を詰めながら小さく話す",
+    "category": "emotion_specific",
+    "style": "surprised",
+    "emotion": "fear",
+    "intensity": "high",
+    "expectedSeconds": 3.8
+  },
+  {
+    "id": "irodori_v2_0074",
+    "text": "この道で合っているはずなのに、だんだん暗くなってきたね。",
+    "direction": "不安を募らせ、慎重に周囲をうかがいながら話す",
+    "category": "emotion_specific",
+    "style": "surprised",
+    "emotion": "fear",
+    "intensity": "medium",
+    "expectedSeconds": 5
+  },
+  {
+    "id": "irodori_v2_0075",
+    "text": "大丈夫、焦らなくていいよ。ここでゆっくり待っているから。",
+    "direction": "相手を安心させるように、近い距離から優しく話す",
+    "category": "emotion_specific",
+    "style": "soft",
+    "emotion": "tender",
+    "intensity": "medium",
+    "expectedSeconds": 5
+  },
+  {
+    "id": "irodori_v2_0076",
+    "text": "眠くなったら目を閉じてね。朝までそばにいるよ。",
+    "direction": "いたわりを込め、包み込むような静かな声で話す",
+    "category": "emotion_specific",
+    "style": "soft",
+    "emotion": "tender",
+    "intensity": "low",
+    "expectedSeconds": 4.1
+  },
+  {
+    "id": "irodori_v2_0077",
+    "text": "まだ誰にも言わないでね、これは二人だけの秘密だよ。",
+    "direction": "耳元に届く程度のささやき声で、内緒話をする",
+    "category": "emotion_specific",
+    "style": "whisper",
+    "emotion": "whisper",
+    "intensity": "medium",
+    "expectedSeconds": 5.2
+  },
+  {
+    "id": "irodori_v2_0078",
+    "text": "起こさないように、足音を立てずにそっと行こう。",
+    "direction": "静かな室内で、息を抑えた小声で話す",
+    "category": "emotion_specific",
+    "style": "whisper",
+    "emotion": "whisper",
+    "intensity": "low",
+    "expectedSeconds": 4.8
+  },
+  {
+    "id": "irodori_v2_0079",
+    "text": "風が気持ちいいね。今日はこのままのんびり過ごそうか。",
+    "direction": "肩の力を抜き、穏やかでくつろいだ調子で話す",
+    "category": "emotion_specific",
+    "style": "neutral",
+    "emotion": "relaxed",
+    "intensity": "low",
+    "expectedSeconds": 4.7
+  },
+  {
+    "id": "irodori_v2_0080",
+    "text": "温かいお茶を飲みながら、ゆっくり話せるのはいいね。",
+    "direction": "安心した気分で、落ち着いた柔らかな声で話す",
+    "category": "emotion_specific",
+    "style": "neutral",
+    "emotion": "relaxed",
+    "intensity": "medium",
+    "expectedSeconds": 4.5
+  },
+  {
+    "text": "えーと、次に確認するのは、予約した日時と人数ですね。",
+    "direction": "考えながら言葉を探し、「えーと」から後続文へ自然につなげる",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:えーと",
+      "日時",
+      "撥音"
+    ],
+    "id": "irodori_v2_0081",
+    "expectedSeconds": 5.5
+  },
+  {
+    "text": "あの、窓際の席が空いたら教えてもらえますか。",
+    "direction": "店員へ遠慮がちに声を掛ける自然な依頼として話す",
+    "category": "filler",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:あの",
+      "依頼",
+      "疑問文"
+    ],
+    "id": "irodori_v2_0082",
+    "expectedSeconds": 4.1
+  },
+  {
+    "text": "うーん、青い表紙の本は、たしか二段目だったかな。",
+    "direction": "記憶をたどる短い間を含め、独り言のように話す",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:うーん",
+      "長音",
+      "疑問文"
+    ],
+    "id": "irodori_v2_0083",
+    "expectedSeconds": 5
+  },
+  {
+    "text": "えっと、集合場所は中央改札の前で合ってる？",
+    "direction": "予定を思い出しながら、親しい相手へ確認するように話す",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:えっと",
+      "促音",
+      "疑問文"
+    ],
+    "id": "irodori_v2_0084",
+    "expectedSeconds": 4.4
+  },
+  {
+    "text": "まあ、今日は急がず、温かい飲み物でも選ぼうよ。",
+    "direction": "相手をなだめるように、肩の力を抜いて穏やかに話す",
+    "category": "filler",
+    "style": "neutral",
+    "emotion": "relaxed",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:まあ",
+      "勧誘",
+      "拗音"
+    ],
+    "id": "irodori_v2_0085",
+    "expectedSeconds": 4.2
+  },
+  {
+    "text": "その、言いにくいんだけど、予定を少し変えてもいい？",
+    "direction": "ためらいを残しつつ、失礼にならない自然な相談として話す",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:その",
+      "相談",
+      "疑問文"
+    ],
+    "id": "irodori_v2_0086",
+    "expectedSeconds": 5.2
+  },
+  {
+    "text": "なんというか、この香りをかぐと夏休みを思い出すね。",
+    "direction": "感覚を言葉にしようと考えながら、懐かしそうに話す",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "relaxed",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:なんというか",
+      "連母音",
+      "回想"
+    ],
+    "id": "irodori_v2_0087",
+    "expectedSeconds": 5.2
+  },
+  {
+    "text": "ほら、坂の向こうに白い灯台が見えてきたよ。",
+    "direction": "相手にも景色を見せるように、明るく指し示して話す",
+    "category": "filler",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "medium",
+    "coverageTags": [
+      "フィラー:ほら",
+      "長母音",
+      "呼び掛け"
+    ],
+    "id": "irodori_v2_0088",
+    "expectedSeconds": 3.8
+  },
+  {
+    "text": "そうですね、候補を三つに絞ってから比べましょう。",
+    "direction": "相手の意見を受け止め、落ち着いて提案するように話す",
+    "category": "filler",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "フィラー:そうですね",
+      "助数詞",
+      "拗音"
+    ],
+    "id": "irodori_v2_0089",
+    "expectedSeconds": 4.5
+  },
+  {
+    "text": "たしか、会議は午後二時半から第三会議室でした。",
+    "direction": "記憶を確かめながらも、後半は明瞭な案内として話す",
+    "category": "filler",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "フィラー:たしか",
+      "時刻",
+      "序数"
+    ],
+    "id": "irodori_v2_0090",
+    "expectedSeconds": 4.1
+  },
+  {
+    "text": "あー、なるほど。ここを長押しすれば開くんだね。",
+    "direction": "仕組みを理解した瞬間として、納得を自然に声へ出す",
+    "category": "filler",
+    "style": "neutral",
+    "emotion": "surprise",
+    "intensity": "medium",
+    "coverageTags": [
+      "フィラー:あー",
+      "相づち",
+      "長音"
+    ],
+    "id": "irodori_v2_0091",
+    "expectedSeconds": 4.2
+  },
+  {
+    "text": "ええと、六個入りを二箱と、ばらで三個ください。",
+    "direction": "注文を頭の中で数えながら、店員へ聞き取りやすく伝える",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:ええと",
+      "助数詞",
+      "数字"
+    ],
+    "id": "irodori_v2_0092",
+    "expectedSeconds": 4.8
+  },
+  {
+    "text": "ええ、その内容で問題ありません。準備を進めてください。",
+    "direction": "相手の説明を了承し、丁寧で落ち着いた調子で返答する",
+    "category": "filler",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "相づち:ええ",
+      "敬語",
+      "撥音"
+    ],
+    "id": "irodori_v2_0093",
+    "expectedSeconds": 5.1
+  },
+  {
+    "text": "はい、音量と接続先を確認してから開始します。",
+    "direction": "短く了承してから、作業手順を端的かつ素早く伝える",
+    "category": "filler",
+    "style": "fast",
+    "emotion": "fast",
+    "intensity": "medium",
+    "coverageTags": [
+      "相づち:はい",
+      "手順",
+      "濁音"
+    ],
+    "id": "irodori_v2_0094",
+    "expectedSeconds": 3.1
+  },
+  {
+    "text": "なるほど、だから昨日だけ表示が遅れていたんですね。",
+    "direction": "原因に納得し、相手と理解を共有する自然な会話として話す",
+    "category": "filler",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "相づち:なるほど",
+      "因果",
+      "撥音"
+    ],
+    "id": "irodori_v2_0095",
+    "expectedSeconds": 4.5
+  },
+  {
+    "text": "そっか、それなら帰り道で薬局に寄ってみるよ。",
+    "direction": "提案を受け入れ、次の行動を決めたように軽く話す",
+    "category": "filler",
+    "style": "neutral",
+    "emotion": "relaxed",
+    "intensity": "low",
+    "coverageTags": [
+      "相づち:そっか",
+      "促音",
+      "拗音"
+    ],
+    "id": "irodori_v2_0096",
+    "expectedSeconds": 3.9
+  },
+  {
+    "text": "へえ、この小さな部品が、全体の揺れを抑えるんだ。",
+    "direction": "初めて知った驚きと興味を、誇張しすぎずに表す",
+    "category": "filler",
+    "style": "surprised",
+    "emotion": "surprise",
+    "intensity": "medium",
+    "coverageTags": [
+      "相づち:へえ",
+      "驚き",
+      "撥音"
+    ],
+    "id": "irodori_v2_0097",
+    "expectedSeconds": 4.3
+  },
+  {
+    "text": "そうそう、角を曲がった先の赤い屋根のお店だよ。",
+    "direction": "思い出した勢いを保ち、親しげに少し速く補足する",
+    "category": "filler",
+    "style": "fast",
+    "emotion": "fast",
+    "intensity": "medium",
+    "coverageTags": [
+      "相づち:そうそう",
+      "促音",
+      "場所"
+    ],
+    "id": "irodori_v2_0098",
+    "expectedSeconds": 3.3
+  },
+  {
+    "text": "あ、そうだ、冷蔵庫に入れたケーキを忘れないでね。",
+    "direction": "急に用事を思い出し、親しい相手へ少し速く念を押す",
+    "category": "filler",
+    "style": "fast",
+    "emotion": "fast",
+    "intensity": "medium",
+    "coverageTags": [
+      "フィラー:あ、そうだ",
+      "想起",
+      "長音"
+    ],
+    "id": "irodori_v2_0099",
+    "expectedSeconds": 3.5
+  },
+  {
+    "text": "んー、どちらも良いけど、今回は軽い方を持っていこう。",
+    "direction": "二つを比べて迷う間を置き、最後は自然に決める",
+    "category": "filler",
+    "style": "hesitant",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "フィラー:んー",
+      "比較",
+      "長音"
+    ],
+    "id": "irodori_v2_0100",
+    "expectedSeconds": 5.5
+  },
+  {
+    "text": "抽選に当たったよ、これで週末のライブへ行ける！",
+    "direction": "待っていた結果を喜び、明るく弾む声で伝える",
+    "category": "style_coverage",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "high",
+    "coverageTags": [
+      "喜び",
+      "撥音",
+      "外来語"
+    ],
+    "id": "irodori_v2_0101",
+    "expectedSeconds": 4.1
+  },
+  {
+    "text": "返事のない部屋で、時計の音だけが静かに響いていた。",
+    "direction": "寂しい情景を思い浮かべ、抑えた弱い声で語る",
+    "category": "style_coverage",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "medium",
+    "coverageTags": [
+      "悲しみ",
+      "情景描写",
+      "促音"
+    ],
+    "id": "irodori_v2_0102",
+    "expectedSeconds": 5.3
+  },
+  {
+    "text": "何度も確認したのに、同じ間違いを繰り返さないで。",
+    "direction": "怒鳴らずに不満を抑え、語句を区切って強めに話す",
+    "category": "style_coverage",
+    "style": "dissatisfied",
+    "emotion": "anger",
+    "intensity": "medium",
+    "coverageTags": [
+      "抑えた不満",
+      "否定",
+      "濁音"
+    ],
+    "id": "irodori_v2_0103",
+    "expectedSeconds": 4.3
+  },
+  {
+    "text": "まさか、あの小さな種からこんな花が咲いたの？",
+    "direction": "予想外の出来事に気づき、素直な驚きを含めて尋ねる",
+    "category": "style_coverage",
+    "style": "surprised",
+    "emotion": "surprise",
+    "intensity": "medium",
+    "coverageTags": [
+      "驚き",
+      "疑問文",
+      "連母音"
+    ],
+    "id": "irodori_v2_0104",
+    "expectedSeconds": 3.9
+  },
+  {
+    "text": "暗い廊下の奥で、誰かが動いたような気がする。",
+    "direction": "怖さを大声にせず、警戒しながら息を抑えて話す",
+    "category": "style_coverage",
+    "style": "surprised",
+    "emotion": "fear",
+    "intensity": "medium",
+    "coverageTags": [
+      "恐れ",
+      "描写",
+      "長母音"
+    ],
+    "id": "irodori_v2_0105",
+    "expectedSeconds": 3.9
+  },
+  {
+    "text": "眠そうだね。毛布を掛けるから、そのまま休んでいて。",
+    "direction": "眠りを妨げないよう、近い距離から優しく声を掛ける",
+    "category": "style_coverage",
+    "style": "soft",
+    "emotion": "tender",
+    "intensity": "low",
+    "coverageTags": [
+      "優しい小声",
+      "長母音",
+      "撥音"
+    ],
+    "id": "irodori_v2_0106",
+    "expectedSeconds": 4.5
+  },
+  {
+    "text": "扉の向こうに人がいるから、今は音を立てないで。",
+    "direction": "周囲へ聞こえないよう、息を増やしすぎない囁きで話す",
+    "category": "style_coverage",
+    "style": "whisper",
+    "emotion": "whisper",
+    "intensity": "low",
+    "coverageTags": [
+      "囁き",
+      "否定",
+      "長母音"
+    ],
+    "id": "irodori_v2_0107",
+    "expectedSeconds": 4.8
+  },
+  {
+    "text": "電車が来るよ、切符と荷物を持って急いで！",
+    "direction": "発音を省略せず、急いでいる状況を速いテンポで伝える",
+    "category": "style_coverage",
+    "style": "fast",
+    "emotion": "fast",
+    "intensity": "medium",
+    "coverageTags": [
+      "速い発話",
+      "促音",
+      "命令"
+    ],
+    "id": "irodori_v2_0108",
+    "expectedSeconds": 2.9
+  },
+  {
+    "text": "ヴェネツィア行きのツアーでは、ドゥカーレ宮殿も見学します。",
+    "direction": "旅行案内として、珍しい外来音を区切らず滑らかに話す",
+    "category": "phonetic_extension",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "ヴェ音",
+      "ツィ音",
+      "ドゥ音",
+      "長音"
+    ],
+    "id": "irodori_v2_0109",
+    "expectedSeconds": 5.4
+  },
+  {
+    "text": "トゥールーズの古い街角で、チェロとフルートが響いていた。",
+    "direction": "異国の街の情景を浮かべ、落ち着いたナレーションで語る",
+    "category": "phonetic_extension",
+    "style": "narration",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "トゥ音",
+      "チェ音",
+      "長音",
+      "外来語"
+    ],
+    "id": "irodori_v2_0110",
+    "expectedSeconds": 5.5
+  },
+  {
+    "text": "帰りのバスは、南口の三番乗り場から出るはずだよ。",
+    "direction": "日常の案内として、場所と番号を自然かつ明瞭に話す",
+    "category": "unique_eval",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "助数詞",
+      "撥音"
+    ],
+    "id": "irodori_v2_0111",
+    "expectedSeconds": 4.3
+  },
+  {
+    "text": "見て、雲の切れ間から朝日が差し込んできた！",
+    "direction": "美しい変化を見つけた喜びを、明るく素直に伝える",
+    "category": "unique_eval",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "喜び",
+      "感嘆文"
+    ],
+    "id": "irodori_v2_0112",
+    "expectedSeconds": 3.8
+  },
+  {
+    "text": "もうこの店の音楽を聴けないと思うと、少し寂しいね。",
+    "direction": "思い出を惜しみ、無理な泣き声にせず静かに話す",
+    "category": "unique_eval",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "悲しみ",
+      "長母音"
+    ],
+    "id": "irodori_v2_0113",
+    "expectedSeconds": 5.3
+  },
+  {
+    "text": "締め切りを変えるなら、もっと早く知らせてほしかった。",
+    "direction": "苛立ちを叫びにせず、低く硬い口調で不満を伝える",
+    "category": "unique_eval",
+    "style": "dissatisfied",
+    "emotion": "anger",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "抑えた不満",
+      "促音"
+    ],
+    "id": "irodori_v2_0114",
+    "expectedSeconds": 4.7
+  },
+  {
+    "text": "ここだけの話だけど、あの箱には触らないでね。",
+    "direction": "すぐ近くの相手だけへ届く、静かで明瞭な囁きで話す",
+    "category": "unique_eval",
+    "style": "whisper",
+    "emotion": "whisper",
+    "intensity": "low",
+    "coverageTags": [
+      "評価",
+      "囁き",
+      "否定"
+    ],
+    "id": "irodori_v2_0115",
+    "expectedSeconds": 4.6
+  },
+  {
+    "text": "左の階段を上がって、二つ目の扉へ急いでください。",
+    "direction": "緊急の案内として、語をつぶさず素早く明瞭に話す",
+    "category": "unique_eval",
+    "style": "fast",
+    "emotion": "fast",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "速い発話",
+      "助数詞"
+    ],
+    "id": "irodori_v2_0116",
+    "expectedSeconds": 3.4
+  },
+  {
+    "text": "ねえ、帰りに温かいスープを買って、一緒に食べない？",
+    "direction": "自然体で、親しい相手を気軽に誘う",
+    "category": "unique_eval",
+    "style": "neutral",
+    "emotion": "neutral",
+    "intensity": "low",
+    "coverageTags": [
+      "評価",
+      "疑問文",
+      "長音"
+    ],
+    "id": "irodori_v2_0117",
+    "expectedSeconds": 4.5
+  },
+  {
+    "text": "本日の受付は午後六時で終了いたします。お早めにお越しください。",
+    "direction": "施設案内として、丁寧で明瞭に話す",
+    "category": "unique_eval",
+    "style": "formal",
+    "emotion": "neutral",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "時刻",
+      "敬語"
+    ],
+    "id": "irodori_v2_0118",
+    "expectedSeconds": 5.8
+  },
+  {
+    "text": "わあ、この景色、本当に絵みたい！連れてきてくれてありがとう。",
+    "direction": "驚きと喜びが自然にあふれる、明るい口調で話す",
+    "category": "unique_eval",
+    "style": "joy",
+    "emotion": "joy",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "感嘆文",
+      "喜び"
+    ],
+    "id": "irodori_v2_0119",
+    "expectedSeconds": 5.4
+  },
+  {
+    "text": "大切にしていたものだから、なくしたと思うとやっぱり悲しいな。",
+    "direction": "寂しさを抑えながら、静かで弱い声で話す",
+    "category": "unique_eval",
+    "style": "sad",
+    "emotion": "sadness",
+    "intensity": "medium",
+    "coverageTags": [
+      "評価",
+      "促音",
+      "悲しみ"
+    ],
+    "id": "irodori_v2_0120",
+    "expectedSeconds": 6.4
+  }
+]

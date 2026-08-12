@@ -14,6 +14,8 @@ StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTS�
 - Speaker Inversion、複数参照音声、参照なし、LoRAをボイスとして保存
 - 指定行からの連続生成・再生
 - 配信用FIFOキュー、自動再生、停止、再生音量、OBS向け音声出力デバイス選択
+- Irodori Starter 120／AICA Character Core 200／AICA Full 500の段階切り換え、波形・音量確認、試聴、採用、録り直し、進捗管理
+- 名前付き録音データセットの作成・選択・削除と、学習用メタデータの自動保存
 - VOICEVOX互換APIと永続するSpeaker/Style ID
 - 行別WAV、master WAV、SRT、VTT、CSV、JSON、FFmpeg concat listのZIP書き出し
 
@@ -131,6 +133,20 @@ Browser
 5. 台本行の再生、または「ここから連続再生」を開始します。
 6. 更新アイコンで新しいテイクを作り、番号で採用テイクを選びます。
 
+## 録音スタジオ
+
+上部の「録音」から録音スタジオを開き、左上のコーパス選択で3段階の収録範囲を切り換えられます。第1段階のIrodori Starter 120 v2は、重複のない120文で日本語の主要なモーラ、外来音、数字、基本感情と20種類のフィラー／相づちを収録します。第2段階はフィラー・笑い・短い応答をさらに拡張するAICA Character Core 200、第3段階はAICA Full 500です。Core 200はFull 500と同じ文章IDと録音を共有するため、第3段階へ進んでも録り直す必要はありません。
+
+初回表示時にブラウザー標準のマイク許可だけを求め、許可後は使用するマイクを選択できます。録音中は別ワークスペースやコーパスの切り換えを無効にし、停止後に波形、録音時間、音量、クリッピングを確認して、試聴・採用・録り直しを行えます。
+
+録音画面では、話者や収録目的ごとに名前を付けた録音データセットを作成・選択・削除できます。録音は全段階で共通のルートデータセットとして扱い、48 kHz・モノラル・PCM 16-bit WAVへ変換して`workspace/recordings/`へ自動保存します。Core 200で採用した録音は、同じデータセットのFull 500でもそのまま採用済みとして扱われます。
+
+各データセットには管理情報の`dataset.json`、採用済み音声だけを列挙する学習用`dataset.jsonl`、音声を保持する`wavs/`があり、録音や採用のたびにStudioが更新します。外部サービスへの送信や手動のZIP書き出しは必要ありません。次に実装するトレーニング画面は、この一覧と安定したデータセットIDを直接使用します。以前のブラウザー保存録音がある場合は、最初の読み込み時に名前付きデータセットへ安全に移してから元データを消去します。
+
+AICAの文章には出典、固定した上流バージョン、CC0 1.0 Universalを記録します。AICAの文章と、新しく収録した音声の権利条件は別に扱います。
+
+AICA corpusの出典とライセンスは[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)を参照してください。
+
 ## プロジェクト管理
 
 上部のフォルダーアイコンから「プロジェクト管理」を開きます。ここで名前を付けた新規作成、保存済みプロジェクトを開く操作、不要なプロジェクトの削除ができます。別のプロジェクトを開く前には現在の作業が保存されるため、切り替えによって編集中の内容が失われることはありません。
@@ -151,10 +167,11 @@ Studio自身の実行データは`workspace/`へ保存します。
 | --- | --- |
 | `workspace/audio/` | 生成WAVと生成メタデータ |
 | `workspace/projects/` | Studioで保存したローカルプロジェクト |
+| `workspace/recordings/` | 名前付き録音データセット、採用済み学習マニフェスト、録音WAV |
 | `workspace/exports/` | 動画・配信用ZIP |
 | `workspace/voices/profiles.json` | ボイスライブラリ本体、固定Style ID、API公開設定 |
 
-`workspace/`、`.studio/`、モデル、個人音声はGit管理されません。ブラウザー側の作業中プロジェクトは`localStorage`にも自動保存されます。ボイスライブラリの変更はボイス単位でプロジェクトとは別にローカルサーバーへ自動保存され、別のプロジェクトでも同じボイスを利用できます。プロジェクトを開き直すと安定したプロフィールIDでボイス設定を復元します。旧`workspace/voicevox/profiles.json`は初回起動時に新しい保存先へ安全に移行されます。
+`workspace/`、`.studio/`、モデル、個人音声はGit管理されません。ブラウザー側の作業中プロジェクトは`localStorage`にも自動保存されます。録音データセットとボイスライブラリはプロジェクトとは独立してローカルサーバーへ自動保存され、別の制作プロジェクトや将来のトレーニングから利用できます。プロジェクトを開き直すと安定したプロフィールIDでボイス設定を復元します。旧`workspace/voicevox/profiles.json`は初回起動時に新しい保存先へ安全に移行されます。
 
 ## VOICEVOX互換API
 
@@ -169,7 +186,7 @@ Invoke-WebRequest -Method Post -Uri 'http://127.0.0.1:50021/synthesis?speaker=10
 
 ## 開発
 
-アーキテクチャと開発手順は[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)、設計上の判断は[AGENTS.md](AGENTS.md)、今後の録音・学習統合は[docs/ROADMAP.md](docs/ROADMAP.md)にまとめています。
+アーキテクチャと開発手順は[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)、設計上の判断は[AGENTS.md](AGENTS.md)、録音の現状と今後の学習統合は[docs/ROADMAP.md](docs/ROADMAP.md)にまとめています。
 
 基本的な検証コマンドです。
 

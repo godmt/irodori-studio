@@ -20,6 +20,12 @@
   --success: #35766d;
   --success-soft: #dcebe7;
   --warning: #a96d18;
+  --type-support: 0.75rem;
+  --type-label: 0.875rem;
+  --type-body: 1rem;
+  --type-lead: 1.125rem;
+  --type-section-title: 1.5rem;
+  --type-workspace-title: 1.75rem;
   --shadow: 0 10px 30px rgba(74, 54, 32, 0.1);
   --shadow-tight: 0 3px 12px rgba(74, 54, 32, 0.09);
 }
@@ -57,7 +63,7 @@ input:focus, textarea:focus, select:focus {
 .app-shell {
   display: grid;
   grid-template-rows: 68px minmax(0, 1fr) auto;
-  width: 100vw;
+  width: 100%;
   height: 100vh;
   min-height: 620px;
   overflow: hidden;
@@ -83,7 +89,7 @@ input:focus, textarea:focus, select:focus {
 .brand-block small { margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.11em; }
 
 .view-switcher { display: flex; gap: 4px; padding: 4px; background: #eee4d6; border: 1px solid #e2d5c4; border-radius: 13px; }
-.view-switcher button { display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 15px; color: var(--muted); background: transparent; border: 0; border-radius: 9px; font-size: 13px; font-weight: 700; }
+.view-switcher button { display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 15px; color: var(--muted); background: transparent; border: 0; border-radius: 9px; font-size: var(--type-label); font-weight: 700; white-space: nowrap; }
 .view-switcher button.active { color: var(--accent-dark); background: var(--paper); box-shadow: var(--shadow-tight); }
 
 .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
@@ -94,6 +100,10 @@ input:focus, textarea:focus, select:focus {
 .model-state { width: 9px; height: 9px; flex: 0 0 auto; background: #aaa096; border-radius: 50%; box-shadow: 0 0 0 4px #ebe4dc; }
 .model-pill.loaded .model-state { background: var(--success); box-shadow: 0 0 0 4px var(--success-soft); }
 .queue-indicator { display: flex; align-items: center; gap: 5px; min-width: 42px; color: var(--muted); font-size: 13px; }
+.recorder-local-pill { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 5px 12px; color: var(--success); background: var(--success-soft); border: 1px solid #bfd7d1; border-radius: 12px; }
+.recorder-local-pill > span { display: grid; }
+.recorder-local-pill small { font-size: var(--type-support); font-weight: 900; letter-spacing: 0.12em; }
+.recorder-local-pill strong { margin-top: 2px; color: var(--ink); font-size: var(--type-label); }
 
 .icon-button { display: inline-grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto; padding: 0; text-decoration: none; background: var(--paper); border: 1px solid var(--line); border-radius: 50%; }
 .icon-button:hover:not(:disabled) { color: var(--accent-dark); border-color: #cfaa81; background: var(--accent-pale); }
