@@ -7,10 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.mjs",
-    "test:sites": "node --test tests/sites-worker.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

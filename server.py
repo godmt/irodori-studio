@@ -39,7 +39,7 @@ from irodori_tts.inference_runtime import (
 )
 
 from studio_backend.engine import StudioEngine
-from studio_backend.exporter import create_production_zip, safe_stem
+from studio_backend.exporter import create_production_zip
 from studio_backend.models import (
     DialogRequest,
     ModelLoadRequest,
@@ -48,7 +48,8 @@ from studio_backend.models import (
     SynthesisPayload,
     VoiceProfileRequest,
 )
-from studio_backend.voice_profiles import VoiceProfileStore
+from studio_backend.project_store import ProjectStore
+from studio_backend.voice_profiles import VoiceProfileStore, migrate_voice_profile_store
 from studio_backend.voicevox_api import create_voicevox_app
 
 WORKSPACE = STUDIO_ROOT / "workspace"
@@ -56,11 +57,15 @@ AUDIO_DIR = WORKSPACE / "audio"
 EXPORT_DIR = WORKSPACE / "exports"
 PROJECT_DIR = WORKSPACE / "projects"
 VOICEVOX_DIR = WORKSPACE / "voicevox"
-for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, VOICEVOX_DIR):
+VOICE_DIR = WORKSPACE / "voices"
+for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, VOICEVOX_DIR, VOICE_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
+migrate_voice_profile_store(VOICEVOX_DIR / "profiles.json", VOICE_DIR / "profiles.json")
+
 engine = StudioEngine(audio_dir=AUDIO_DIR)
-voice_profile_store = VoiceProfileStore(VOICEVOX_DIR / "profiles.json")
+project_store = ProjectStore(PROJECT_DIR)
+voice_profile_store = VoiceProfileStore(VOICE_DIR / "profiles.json")
 voicevox_app = create_voicevox_app(engine=engine, profile_store=voice_profile_store)
 voicevox_runtime: dict[str, Any] = {
     "enabled": True,
@@ -237,33 +242,41 @@ def get_audio(audio_file: str) -> FileResponse:
 
 @app.get("/api/projects")
 def list_projects() -> list[dict[str, Any]]:
-    projects = []
-    for path in sorted(
-        PROJECT_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True
-    ):
-        projects.append(
-            {
-                "name": path.stem,
-                "filename": path.name,
-                "updated_at": path.stat().st_mtime,
-            }
-        )
-    return projects
+    return project_store.list()
+
+
+@app.post("/api/projects/create")
+def create_project(request: ProjectSaveRequest) -> dict[str, Any]:
+    try:
+        return project_store.create(request.name, request.project)
+    except FileExistsError as exc:
+        raise HTTPException(
+            status_code=409, detail="同じ名前のプロジェクトがすでにあります"
+        ) from exc
 
 
 @app.get("/api/projects/{project_name}")
 def load_project(project_name: str) -> dict[str, Any]:
-    path = PROJECT_DIR / f"{safe_stem(project_name)}.json"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Project not found")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return project_store.load(project_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません") from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="プロジェクトを開けませんでした") from exc
 
 
 @app.post("/api/projects/save")
 def save_project(request: ProjectSaveRequest) -> dict[str, Any]:
-    path = PROJECT_DIR / f"{safe_stem(request.name)}.json"
-    path.write_text(json.dumps(request.project, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"saved": True, "name": path.stem, "path": str(path)}
+    return project_store.save(request.name, request.project)
+
+
+@app.delete("/api/projects/{project_name}")
+def delete_project(project_name: str) -> dict[str, bool]:
+    try:
+        project_store.delete(project_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません") from exc
+    return {"deleted": True}
 
 
 @app.post("/api/export")
@@ -291,10 +304,6 @@ def open_dialog(request: DialogRequest) -> dict[str, list[str]]:
         paths: tuple[str, ...] | str
         if request.kind == "lora":
             paths = filedialog.askdirectory(title="LoRAアダプターを選択")
-        elif request.kind == "project":
-            paths = filedialog.askopenfilename(
-                title="プロジェクトJSONを選択", filetypes=[("JSON", "*.json")]
-            )
         else:
             filetypes = {
                 "checkpoint": [("Irodori checkpoint", "*.safetensors *.pt")],

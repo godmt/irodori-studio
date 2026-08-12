@@ -10,10 +10,28 @@ if str(STUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(STUDIO_ROOT))
 
 from studio_backend.models import VoiceProfileRequest  # noqa: E402
-from studio_backend.voice_profiles import VoiceProfileStore  # noqa: E402
+from studio_backend.voice_profiles import (  # noqa: E402
+    VoiceProfileStore,
+    migrate_voice_profile_store,
+)
 
 
 class VoiceProfileStoreTests(unittest.TestCase):
+    def test_legacy_voicevox_store_is_migrated_without_overwriting_current_library(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "voicevox" / "profiles.json"
+            current = root / "voices" / "profiles.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text('{"schema_version": 1, "profiles": [{"name": "Legacy"}]}', encoding="utf-8")
+
+            self.assertTrue(migrate_voice_profile_store(legacy, current))
+            self.assertIn("Legacy", current.read_text(encoding="utf-8"))
+            self.assertFalse(current.with_suffix(".migration.tmp").exists())
+            current.write_text("current", encoding="utf-8")
+            self.assertFalse(migrate_voice_profile_store(legacy, current))
+            self.assertEqual(current.read_text(encoding="utf-8"), "current")
+
     def test_ids_are_stable_across_updates_and_reload(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profiles.json"

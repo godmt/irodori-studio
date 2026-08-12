@@ -13,6 +13,7 @@ import {
   FileText,
   FloppyDisk,
   FolderOpen,
+  FolderPlus,
   GearSix,
   HardDrive,
   Lightning,
@@ -21,6 +22,7 @@ import {
   MicrophoneStage,
   Pause,
   Play,
+  PlugsConnected,
   Plus,
   Queue,
   SlidersHorizontal,
@@ -37,6 +39,11 @@ import {
 } from "@phosphor-icons/react";
 
 import { api, audioUrl } from "./api.js";
+import {
+  AUDIO_OUTPUT_STORAGE_KEY,
+  normalizeAudioOutputs,
+  parseAudioOutputPreference,
+} from "./audio-output.js";
 import {
   createDefaultProject,
   createLine,
@@ -61,10 +68,28 @@ import {
   splitImportedText,
   updateLine,
 } from "./project-state.js";
+import {
+  mergeVoiceLibrary,
+  voiceFingerprint,
+  voicePersistenceError,
+  voiceToProfilePayload,
+  VOICE_COLORS,
+} from "./voice-library.js";
 
 const STORAGE_KEY = "irodori-studio-project-v1";
 const PLAYBACK_VOLUME_KEY = "irodori-studio-playback-volume-v2";
-const VOICE_COLORS = ["#c9651b", "#35766d", "#7960a8", "#a94848", "#476b9b", "#7c7138"];
+
+function nextAvailableProjectName(projects, currentTitle = "") {
+  const base = "新しい音声プロジェクト";
+  const names = new Set([
+    currentTitle,
+    ...projects.map((item) => item.name),
+  ].map((name) => String(name || "").trim()).filter(Boolean));
+  if (!names.has(base)) return base;
+  let index = 2;
+  while (names.has(`${base} ${index}`)) index += 1;
+  return `${base} ${index}`;
+}
 
 function loadPlaybackVolume() {
   const raw = localStorage.getItem(PLAYBACK_VOLUME_KEY);
@@ -192,6 +217,48 @@ function StatusBadge({ line }) {
   return <span className="status-badge idle">未生成</span>;
 }
 
+function PlaybackVolumeControl({ value, onChange }) {
+  return (
+    <label className="playback-volume">
+      <SpeakerHigh size={19} aria-hidden="true" />
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value={value}
+        aria-label="再生音量"
+        aria-valuetext={`${value}%`}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      <output>{value}%</output>
+    </label>
+  );
+}
+
+function AudioOutputControl({ devices, value, status, onChange }) {
+  const busy = status === "requesting" || status === "switching";
+  const locked = status === "locked-default" || status === "unsupported";
+  return (
+    <div className={`audio-output-control ${locked ? "locked" : ""}`}>
+      <PlugsConnected size={19} aria-hidden="true" />
+      <label>
+        <select
+          value={value}
+          aria-label="再生音声の出力先"
+          onChange={(event) => onChange(event.target.value)}
+          disabled={busy || locked}
+          title={locked ? "音声デバイスへのアクセスが許可されていないため、システム既定を使用します" : undefined}
+        >
+          {devices.map((device) => (
+            <option key={device.deviceId || "system-default"} value={device.deviceId}>{device.label}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 function App() {
   const [project, setProject] = useState(loadLocalProject);
   const [selectedLineId, setSelectedLineId] = useState(() => project.lines[0]?.id || null);
@@ -216,6 +283,9 @@ function App() {
   const [selectedVoiceId, setSelectedVoiceId] = useState(project.voices[0]?.id || null);
   const [importText, setImportText] = useState("");
   const [savedProjects, setSavedProjects] = useState([]);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [activeProjectName, setActiveProjectName] = useState(project.title);
   const [exportBusy, setExportBusy] = useState(false);
   const [draggedLineId, setDraggedLineId] = useState(null);
   const [liveInput, setLiveInput] = useState("");
@@ -224,7 +294,14 @@ function App() {
   const [liveVoiceId, setLiveVoiceId] = useState(project.voices[0]?.id || null);
   const [livePreset, setLivePreset] = useState("live");
   const [playbackVolume, setPlaybackVolume] = useState(loadPlaybackVolume);
+  const [audioOutputPreference, setAudioOutputPreference] = useState(() => (
+    parseAudioOutputPreference(localStorage.getItem(AUDIO_OUTPUT_STORAGE_KEY))
+  ));
+  const [audioOutputs, setAudioOutputs] = useState(() => normalizeAudioOutputs());
+  const [audioOutputStatus, setAudioOutputStatus] = useState("checking");
   const [serverVoiceProfiles, setServerVoiceProfiles] = useState([]);
+  const [voiceLibraryReady, setVoiceLibraryReady] = useState(false);
+  const [voiceSaveState, setVoiceSaveState] = useState({ status: "loading", message: "ライブラリを読み込み中" });
   const [emojiPicker, setEmojiPicker] = useState(null);
   const [emojiExpanded, setEmojiExpanded] = useState(false);
 
@@ -236,10 +313,14 @@ function App() {
   const generationPromisesRef = useRef(new Map());
   const liveQueueRef = useRef([]);
   const livePumpingRef = useRef(false);
-  const importFileRef = useRef(null);
   const lineTextRefs = useRef(new Map());
   const liveTextRef = useRef(null);
   const textSelectionRef = useRef(new Map());
+  const audioOutputInitializedRef = useRef(false);
+  const voiceSaveTimerRef = useRef(null);
+  const voiceSaveInFlightRef = useRef(false);
+  const voiceSaveQueuedRef = useRef(false);
+  const savedVoiceFingerprintsRef = useRef(new Map());
 
   const selectedLine = useMemo(
     () => project.lines.find((line) => line.id === selectedLineId) || project.lines[0] || null,
@@ -257,6 +338,65 @@ function App() {
     setToast({ message, tone, id: Date.now() });
   }, []);
 
+  const updatePlaybackVolume = useCallback((value) => {
+    setPlaybackVolume(value);
+    localStorage.setItem(PLAYBACK_VOLUME_KEY, JSON.stringify({ value }));
+  }, []);
+
+  const rememberAudioOutput = useCallback((device) => {
+    const preference = {
+      deviceId: device?.deviceId || "",
+      label: device?.label?.trim() || (device?.deviceId ? "選択した音声出力" : "システム既定"),
+      configured: true,
+    };
+    setAudioOutputPreference(preference);
+    localStorage.setItem(AUDIO_OUTPUT_STORAGE_KEY, JSON.stringify({
+      deviceId: preference.deviceId,
+      label: preference.label,
+    }));
+    return preference;
+  }, []);
+
+  const applyAudioOutput = useCallback(async (deviceId) => {
+    const audio = audioRef.current;
+    if (!audio || typeof audio.setSinkId !== "function") {
+      if (deviceId) throw new Error("このブラウザーは音声出力先の切り替えに対応していません");
+      return;
+    }
+    await audio.setSinkId(deviceId);
+  }, []);
+
+  const refreshAudioOutputs = useCallback(async (selectedDevice = null) => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setAudioOutputs(normalizeAudioOutputs([], selectedDevice));
+      return [];
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const normalized = normalizeAudioOutputs(devices, selectedDevice);
+    setAudioOutputs(normalized);
+    return normalized;
+  }, []);
+
+  const chooseAudioOutput = useCallback(async (deviceId) => {
+    const device = audioOutputs.find((item) => item.deviceId === deviceId) || {
+      deviceId: "",
+      label: "システム既定",
+    };
+    setAudioOutputStatus("switching");
+    try {
+      await applyAudioOutput(device.deviceId);
+      rememberAudioOutput(device);
+      setAudioOutputStatus("ready");
+      notify(`${device.label}へ再生音声を出力します`, "success");
+    } catch (error) {
+      await applyAudioOutput("");
+      rememberAudioOutput({ deviceId: "", label: "システム既定" });
+      setAudioOutputs(normalizeAudioOutputs());
+      setAudioOutputStatus("locked-default");
+      notify(error.message || "出力デバイスを切り替えられないため、システム既定へ戻しました", "error");
+    }
+  }, [applyAudioOutput, audioOutputs, notify, rememberAudioOutput]);
+
   useEffect(() => {
     projectRef.current = project;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...project, updatedAt: new Date().toISOString() }));
@@ -265,6 +405,76 @@ function App() {
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = playbackVolume / 100;
   }, [playbackVolume]);
+
+  useEffect(() => {
+    if (audioOutputInitializedRef.current) return undefined;
+    audioOutputInitializedRef.current = true;
+    let cancelled = false;
+    const initialize = async () => {
+      const supported = Boolean(
+        navigator.mediaDevices?.enumerateDevices
+        && navigator.mediaDevices?.getUserMedia
+        && typeof audioRef.current?.setSinkId === "function"
+      );
+      if (!supported) {
+        if (!cancelled) {
+          await applyAudioOutput("");
+          rememberAudioOutput({ deviceId: "", label: "システム既定" });
+          setAudioOutputs(normalizeAudioOutputs());
+          setAudioOutputStatus("unsupported");
+        }
+        return;
+      }
+      try {
+        setAudioOutputStatus("requesting");
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        stream.getTracks().forEach((track) => track.stop());
+        const devices = await refreshAudioOutputs(audioOutputPreference.deviceId ? {
+          kind: "audiooutput",
+          deviceId: audioOutputPreference.deviceId,
+          label: audioOutputPreference.label,
+        } : null);
+        if (
+          audioOutputPreference.deviceId
+          && devices.some((device) => device.deviceId === audioOutputPreference.deviceId)
+        ) {
+          await applyAudioOutput(audioOutputPreference.deviceId);
+        } else {
+          await applyAudioOutput("");
+          rememberAudioOutput({ deviceId: "", label: "システム既定" });
+        }
+        if (!cancelled) setAudioOutputStatus("ready");
+      } catch {
+        await applyAudioOutput("");
+        rememberAudioOutput({ deviceId: "", label: "システム既定" });
+        setAudioOutputs(normalizeAudioOutputs());
+        if (!cancelled) setAudioOutputStatus("locked-default");
+      }
+    };
+    initialize();
+    return () => { cancelled = true; };
+  }, [applyAudioOutput, audioOutputPreference, refreshAudioOutputs]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.addEventListener) return undefined;
+    const handleDeviceChange = async () => {
+      try {
+        const devices = await refreshAudioOutputs();
+        if (
+          audioOutputPreference.deviceId
+          && !devices.some((device) => device.deviceId === audioOutputPreference.deviceId)
+        ) {
+          await applyAudioOutput("");
+          rememberAudioOutput({ deviceId: "", label: "システム既定" });
+          notify("選択中の出力デバイスが外れたため、システム既定へ戻しました");
+        }
+      } catch {
+        // Keep the current sink if device enumeration is temporarily unavailable.
+      }
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+  }, [applyAudioOutput, audioOutputPreference.deviceId, notify, refreshAudioOutputs, rememberAudioOutput]);
 
   useEffect(() => {
     const timer = toast ? window.setTimeout(() => setToast(null), 3600) : null;
@@ -277,7 +487,18 @@ function App() {
       .then((data) => {
         if (cancelled) return;
         setBootstrap(data);
-        setServerVoiceProfiles(data.voice_profiles || []);
+        const profiles = data.voice_profiles || [];
+        const mergedProject = mergeVoiceLibrary(projectRef.current, profiles);
+        projectRef.current = mergedProject;
+        setProject(mergedProject);
+        setServerVoiceProfiles(profiles);
+        savedVoiceFingerprintsRef.current = new Map(
+          mergedProject.voices
+            .filter((voice) => voice.apiProfileId)
+            .map((voice) => [voice.id, voiceFingerprint(voice)]),
+        );
+        setVoiceLibraryReady(true);
+        setVoiceSaveState({ status: "saved", message: "すべての変更を保存済み" });
         setModel(data.model || { loaded: false });
         setModelSettings((current) => ({
           ...current,
@@ -318,59 +539,102 @@ function App() {
     }));
   }, [mutateProject, selectedVoiceId]);
 
-  const saveSelectedVoiceProfile = useCallback(async () => {
-    if (!selectedVoice) return;
-    try {
-      const profile = await api.saveVoiceProfile({
-        profile_id: selectedVoice.apiProfileId || null,
-        name: selectedVoice.name.trim(),
-        style_name: (selectedVoice.apiStyleName || "ノーマル").trim(),
-        enabled: Boolean(selectedVoice.apiEnabled),
-        source_type: selectedVoice.sourceType,
-        ref_embed: selectedVoice.refEmbed || null,
-        ref_wavs: (selectedVoice.refWavs || []).filter(Boolean),
-        lora_adapter: selectedVoice.loraAdapter || null,
-        default_caption: selectedVoice.defaultCaption || "",
-        speed: Number(selectedVoice.apiSpeed ?? 1),
-        num_steps: Number(selectedVoice.apiNumSteps ?? 12),
-        seed: selectedVoice.apiSeed === "" || selectedVoice.apiSeed == null ? null : Number(selectedVoice.apiSeed),
-        cfg_scale_text: Number(selectedVoice.apiCfgScaleText ?? 3),
-        cfg_scale_caption: Number(selectedVoice.apiCfgScaleCaption ?? 3),
-        cfg_scale_speaker: Number(selectedVoice.apiCfgScaleSpeaker ?? 5),
-        policy: selectedVoice.apiPolicy || "",
-      });
-      updateSelectedVoice({
-        apiProfileId: profile.profile_id,
-        apiSpeakerUuid: profile.speaker_uuid,
-        apiStyleId: profile.style_id,
-        apiEnabled: profile.enabled,
-      });
-      setServerVoiceProfiles((current) => [
-        ...current.filter((item) => item.profile_id !== profile.profile_id),
-        profile,
-      ].sort((a, b) => a.style_id - b.style_id));
-      notify(profile.enabled ? `Style ID ${profile.style_id} でAPIへ公開しました` : "API設定を保存しました（非公開）", "success");
-    } catch (error) {
-      notify(error.message, "error");
+  const persistVoiceLibrary = useCallback(async ({ announce = false } = {}) => {
+    if (!voiceLibraryReady || connection !== "online") return;
+    if (voiceSaveInFlightRef.current) {
+      voiceSaveQueuedRef.current = true;
+      return;
     }
-  }, [notify, selectedVoice, updateSelectedVoice]);
+    voiceSaveInFlightRef.current = true;
+    setVoiceSaveState({ status: "saving", message: "ボイス設定を保存中…" });
+    const validationErrors = [];
+    try {
+      const snapshot = projectRef.current.voices;
+      for (const voice of snapshot) {
+        const validationError = voicePersistenceError(voice);
+        if (validationError) {
+          validationErrors.push(`${voice.name || "名称未設定"}: ${validationError}`);
+          continue;
+        }
+        const fingerprint = voiceFingerprint(voice);
+        if (
+          voice.apiProfileId
+          && savedVoiceFingerprintsRef.current.get(voice.id) === fingerprint
+        ) continue;
 
-  const deleteSelectedVoiceProfile = useCallback(async () => {
-    if (!selectedVoice?.apiProfileId) return;
+        const profile = await api.saveVoiceProfile(voiceToProfilePayload(voice));
+        savedVoiceFingerprintsRef.current.set(voice.id, fingerprint);
+        setProject((current) => {
+          const next = {
+            ...current,
+            voices: current.voices.map((item) => item.id === voice.id ? {
+              ...item,
+              apiProfileId: profile.profile_id,
+              apiSpeakerUuid: profile.speaker_uuid,
+              apiStyleId: profile.style_id,
+              apiEnabled: profile.enabled,
+            } : item),
+          };
+          projectRef.current = next;
+          return next;
+        });
+        setServerVoiceProfiles((current) => [
+          ...current.filter((item) => item.profile_id !== profile.profile_id),
+          profile,
+        ].sort((a, b) => a.style_id - b.style_id));
+      }
+
+      if (validationErrors.length) {
+        const message = validationErrors[0];
+        setVoiceSaveState({ status: "error", message });
+        if (announce) notify(message, "error");
+      } else {
+        setVoiceSaveState({ status: "saved", message: "すべての変更を保存済み" });
+        if (announce) notify("ボイスライブラリを保存しました", "success");
+      }
+    } catch (error) {
+      setVoiceSaveState({ status: "error", message: error.message });
+      if (announce) notify(error.message, "error");
+    } finally {
+      voiceSaveInFlightRef.current = false;
+      if (voiceSaveQueuedRef.current) {
+        voiceSaveQueuedRef.current = false;
+        window.setTimeout(() => persistVoiceLibrary(), 0);
+      }
+    }
+  }, [connection, notify, voiceLibraryReady]);
+
+  useEffect(() => {
+    if (!voiceLibraryReady || connection !== "online") return undefined;
+    window.clearTimeout(voiceSaveTimerRef.current);
+    setVoiceSaveState({ status: "pending", message: "変更を保存します…" });
+    voiceSaveTimerRef.current = window.setTimeout(() => persistVoiceLibrary(), 700);
+    return () => window.clearTimeout(voiceSaveTimerRef.current);
+  }, [connection, persistVoiceLibrary, project.voices, voiceLibraryReady]);
+
+  const deleteSelectedVoice = useCallback(async () => {
+    if (!selectedVoice || projectRef.current.voices.length <= 1) return;
+    if (!window.confirm(`「${selectedVoice.name}」をボイスライブラリから削除しますか？`)) return;
     try {
-      await api.deleteVoiceProfile(selectedVoice.apiProfileId);
+      if (selectedVoice.apiProfileId) await api.deleteVoiceProfile(selectedVoice.apiProfileId);
+      const replacementId = projectRef.current.voices.find((voice) => voice.id !== selectedVoice.id)?.id;
+      savedVoiceFingerprintsRef.current.delete(selectedVoice.id);
       setServerVoiceProfiles((current) => current.filter((item) => item.profile_id !== selectedVoice.apiProfileId));
-      updateSelectedVoice({
-        apiProfileId: null,
-        apiEnabled: false,
-        apiSpeakerUuid: null,
-        apiStyleId: null,
-      });
-      notify("API登録を削除しました", "success");
+      mutateProject((current) => ({
+        ...current,
+        voices: current.voices.filter((voice) => voice.id !== selectedVoice.id),
+        lines: current.lines.map((line) => line.voiceId === selectedVoice.id ? {
+          ...line,
+          voiceId: replacementId,
+          stale: Boolean(line.audioFile),
+        } : line),
+      }));
+      setSelectedVoiceId(replacementId);
+      notify("ボイスをライブラリから削除しました", "success");
     } catch (error) {
       notify(error.message, "error");
     }
-  }, [notify, selectedVoice, updateSelectedVoice]);
+  }, [mutateProject, notify, selectedVoice]);
 
   const mutateLine = useCallback((lineId, patch, invalidate = true) => {
     mutateProject((current) => ({
@@ -701,62 +965,123 @@ function App() {
     }
   }, [notify]);
 
+  const activateProject = useCallback((rawProject, storageName = null) => {
+    const loaded = mergeVoiceLibrary(hydrateProject(rawProject), serverVoiceProfiles);
+    stopPlayback();
+    projectRef.current = loaded;
+    setProject(loaded);
+    setSelectedLineId(loaded.lines[0]?.id || null);
+    setSelectedVoiceId(loaded.voices[0]?.id || null);
+    setLiveVoiceId(loaded.voices[0]?.id || null);
+    setActiveProjectName(storageName);
+  }, [serverVoiceProfiles, stopPlayback]);
+
+  const persistCurrentProject = useCallback(async () => {
+    const current = projectRef.current;
+    const name = String(current.title || "").trim();
+    if (!name) throw new Error("プロジェクト名を入力してください");
+    const normalized = { ...current, title: name, updatedAt: new Date().toISOString() };
+    const result = await api.saveProject(name, normalized);
+    projectRef.current = normalized;
+    setProject(normalized);
+    setActiveProjectName(result.name);
+    return result;
+  }, []);
+
   const saveProject = useCallback(async () => {
     try {
-      await api.saveProject(project.title, project);
-      notify("プロジェクトをローカル保存しました", "success");
+      await persistCurrentProject();
+      notify("プロジェクトを保存しました", "success");
     } catch (error) {
       notify(error.message, "error");
     }
-  }, [notify, project]);
+  }, [notify, persistCurrentProject]);
 
-  const downloadProjectJson = useCallback(() => {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${project.title || "irodori-project"}.json`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [project]);
-
-  const importProjectFile = useCallback(async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const loaded = hydrateProject(JSON.parse(await file.text()));
-      setProject(loaded);
-      setSelectedLineId(loaded.lines[0]?.id || null);
-      setSelectedVoiceId(loaded.voices[0]?.id || null);
-      notify("プロジェクトを読み込みました", "success");
-    } catch {
-      notify("プロジェクトJSONを読み込めませんでした", "error");
-    } finally {
-      event.target.value = "";
-    }
-  }, [notify]);
+  const refreshProjects = useCallback(async () => {
+    const projects = await api.projects();
+    setSavedProjects(projects);
+    return projects;
+  }, []);
 
   const openProjectsModal = useCallback(async () => {
     setActiveModal("projects");
+    setProjectBusy(true);
     try {
-      setSavedProjects(await api.projects());
-    } catch {
+      const projects = await refreshProjects();
+      setNewProjectName(nextAvailableProjectName(projects, projectRef.current.title));
+    } catch (error) {
       setSavedProjects([]);
+      setNewProjectName(nextAvailableProjectName([], projectRef.current.title));
+      notify(error.message, "error");
+    } finally {
+      setProjectBusy(false);
     }
-  }, []);
+  }, [notify, refreshProjects]);
 
-  const loadSavedProject = useCallback(async (name) => {
+  const createProject = useCallback(async () => {
+    const name = newProjectName.trim();
+    if (!name) {
+      notify("新しいプロジェクトの名前を入力してください", "error");
+      return;
+    }
+    setProjectBusy(true);
     try {
-      const loaded = hydrateProject(await api.loadProject(name));
-      setProject(loaded);
-      setSelectedLineId(loaded.lines[0]?.id || null);
-      setSelectedVoiceId(loaded.voices[0]?.id || null);
+      await persistCurrentProject();
+      const fresh = { ...createDefaultProject(), title: name, updatedAt: new Date().toISOString() };
+      const result = await api.createProject(name, fresh);
+      activateProject(fresh, result.name);
       setActiveModal(null);
-      notify("保存済みプロジェクトを開きました", "success");
+      notify(`「${name}」を作成しました`, "success");
     } catch (error) {
       notify(error.message, "error");
+      try {
+        const projects = await refreshProjects();
+        setNewProjectName(nextAvailableProjectName(projects, projectRef.current.title));
+      } catch {
+        // Keep the entered name when the project list is temporarily unavailable.
+      }
+    } finally {
+      setProjectBusy(false);
     }
-  }, [notify]);
+  }, [activateProject, newProjectName, notify, persistCurrentProject, refreshProjects]);
+
+  const loadSavedProject = useCallback(async (saved) => {
+    if (saved.storage_name === activeProjectName) {
+      setActiveModal(null);
+      return;
+    }
+    setProjectBusy(true);
+    try {
+      await persistCurrentProject();
+      const loaded = await api.loadProject(saved.storage_name);
+      activateProject(loaded, saved.storage_name);
+      setActiveModal(null);
+      notify(`「${saved.name}」を開きました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setProjectBusy(false);
+    }
+  }, [activateProject, activeProjectName, notify, persistCurrentProject]);
+
+  const deleteSavedProject = useCallback(async (saved) => {
+    if (!window.confirm(`「${saved.name}」を削除しますか？\nこの操作は元に戻せません。`)) return;
+    setProjectBusy(true);
+    try {
+      await api.deleteProject(saved.storage_name);
+      const remaining = await refreshProjects();
+      if (saved.storage_name === activeProjectName) {
+        const fresh = createDefaultProject();
+        activateProject(fresh, null);
+      }
+      setNewProjectName(nextAvailableProjectName(remaining, projectRef.current.title));
+      notify(`「${saved.name}」を削除しました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setProjectBusy(false);
+    }
+  }, [activateProject, activeProjectName, notify, refreshProjects]);
 
   const exportProduction = useCallback(async () => {
     if (staleOrMissing.length) {
@@ -917,8 +1242,8 @@ function App() {
             <CaretDown size={16} />
           </button>
           <span className="queue-indicator"><Queue size={18} /><strong>{queueCount}</strong></span>
-          <IconButton label="プロジェクトを開く" onClick={openProjectsModal}><FolderOpen size={20} /></IconButton>
-          <IconButton label="保存" onClick={saveProject}><FloppyDisk size={20} /></IconButton>
+          <IconButton label="プロジェクト管理" onClick={openProjectsModal}><FolderOpen size={20} /></IconButton>
+          <IconButton label="プロジェクトを保存" onClick={saveProject}><FloppyDisk size={20} /></IconButton>
           <button className="primary-compact" onClick={() => setActiveModal("export")}><Export size={19} />書き出し</button>
         </div>
       </header>
@@ -936,20 +1261,7 @@ function App() {
               </div>
             </div>
             <div className="sidebar-actions">
-              <button onClick={() => addLine()}><Plus size={18} />行を追加</button>
-              <button onClick={() => setActiveModal("import")}><UploadSimple size={18} />文章を取込</button>
-            </div>
-            <div className="line-navigator" aria-label="台本の行一覧">
-              {project.lines.map((line, index) => {
-                const voice = project.voices.find((item) => item.id === line.voiceId);
-                return (
-                  <button key={line.id} className={`nav-line ${selectedLineId === line.id ? "selected" : ""}`} onClick={() => setSelectedLineId(line.id)}>
-                    <span className="nav-index">{index + 1}</span>
-                    <span className="nav-copy"><strong>{line.text || "未入力の行"}</strong><small><i style={{ backgroundColor: voice?.color }} />{voice?.name || "ボイス未設定"}</small></span>
-                    <span className={`nav-status ${line.status} ${line.audioFile && !line.stale ? "ready" : ""}`} />
-                  </button>
-                );
-              })}
+              <button onClick={() => setActiveModal("import")}><UploadSimple size={18} />文章をまとめて追加</button>
             </div>
             <div className="sidebar-voice">
               <span>現在のボイス</span>
@@ -964,25 +1276,13 @@ function App() {
                 <h1>読み上げ台本</h1>
               </div>
               <div className="transport-controls">
-                <label className="playback-volume">
-                  <SpeakerHigh size={19} aria-hidden="true" />
-                  <span>再生音量</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={playbackVolume}
-                    aria-label="再生音量"
-                    aria-valuetext={`${playbackVolume}%`}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      setPlaybackVolume(value);
-                      localStorage.setItem(PLAYBACK_VOLUME_KEY, JSON.stringify({ value }));
-                    }}
-                  />
-                  <output>{playbackVolume}%</output>
-                </label>
+                <AudioOutputControl
+                  devices={audioOutputs}
+                  value={audioOutputPreference.deviceId}
+                  status={audioOutputStatus}
+                  onChange={chooseAudioOutput}
+                />
+                <PlaybackVolumeControl value={playbackVolume} onChange={updatePlaybackVolume} />
                 <button className="secondary-button" onClick={generateAllMissing} disabled={!model.loaded || queueCount > 0}><MagicWand size={19} />未生成を作る</button>
                 {sequenceActive || speakingLineId ? (
                   <button className="stop-button" onClick={stopPlayback}><Stop size={19} weight="fill" />停止</button>
@@ -1084,7 +1384,18 @@ function App() {
           <section className="live-console">
             <div className="live-header">
               <div><span className="eyebrow">LOW-LATENCY QUEUE</span><h1>配信コンソール</h1><p>入力した文章を順番に生成し、完成したものから自動再生します。</p></div>
-              <button className="stop-button" onClick={stopLive}><Stop size={19} weight="fill" />発話を止める</button>
+              <div className="live-header-actions">
+                <div className="live-audio-controls">
+                  <AudioOutputControl
+                    devices={audioOutputs}
+                    value={audioOutputPreference.deviceId}
+                    status={audioOutputStatus}
+                    onChange={chooseAudioOutput}
+                  />
+                  <PlaybackVolumeControl value={playbackVolume} onChange={updatePlaybackVolume} />
+                </div>
+                <button className="stop-button" onClick={stopLive}><Stop size={19} weight="fill" />発話を止める</button>
+              </div>
             </div>
             <div className="live-composer">
               <div className="live-options">
@@ -1201,22 +1512,21 @@ function App() {
             </button>)}
           </aside>
           {selectedVoice && <section className="voice-editor">
+            <div className={`voice-save-state ${voiceSaveState.status}`} title={voiceSaveState.message}>
+              {voiceSaveState.status === "saving" || voiceSaveState.status === "pending"
+                ? <SpinnerGap className="spin" size={17} />
+                : voiceSaveState.status === "error"
+                  ? <WarningCircle size={17} />
+                  : <Check size={17} />}
+              <span>{voiceSaveState.message}</span>
+            </div>
             <div className="voice-name-row">
               <i style={{ backgroundColor: selectedVoice.color }} />
               <input value={selectedVoice.name} onChange={(event) => updateSelectedVoice({ name: event.target.value })} />
               {project.voices.length > 1 && <IconButton
-                label={selectedVoice.apiProfileId ? "API登録を削除してからボイスを削除してください" : "このボイスを削除"}
+                label="このボイスをライブラリから削除"
                 tone="danger"
-                disabled={Boolean(selectedVoice.apiProfileId)}
-                onClick={() => {
-                  const replacementId = project.voices.find((voice) => voice.id !== selectedVoice.id)?.id;
-                  mutateProject((current) => ({
-                    ...current,
-                    voices: current.voices.filter((voice) => voice.id !== selectedVoice.id),
-                    lines: current.lines.map((line) => line.voiceId === selectedVoice.id ? { ...line, voiceId: replacementId, stale: Boolean(line.audioFile) } : line),
-                  }));
-                  setSelectedVoiceId(replacementId);
-                }}
+                onClick={deleteSelectedVoice}
               ><Trash size={18} /></IconButton>}
             </div>
             <div className="source-tabs">
@@ -1243,12 +1553,12 @@ function App() {
             <div className="api-profile-card">
               <header>
                 <span className="api-profile-icon"><Broadcast size={23} /></span>
-                <div><strong>VOICEVOX互換API</strong><small>127.0.0.1:{bootstrap?.voicevox_api?.port || 50021} · 公開中 {serverVoiceProfiles.filter((profile) => profile.enabled).length}スタイル</small></div>
+                <div><strong>VOICEVOX互換API</strong><small>ボイス本体は常にライブラリへ自動保存 · 127.0.0.1:{bootstrap?.voicevox_api?.port || 50021} · 公開中 {serverVoiceProfiles.filter((profile) => profile.enabled).length}スタイル</small></div>
                 {selectedVoice.apiStyleId && <span className="style-id-badge">ID {selectedVoice.apiStyleId}</span>}
               </header>
               <label className="api-publish-toggle">
                 <input type="checkbox" checked={Boolean(selectedVoice.apiEnabled)} onChange={(event) => updateSelectedVoice({ apiEnabled: event.target.checked })} />
-                <span><strong>外部アプリから選べるようにする</strong><small>保存すると 127.0.0.1:{bootstrap?.voicevox_api?.port || 50021} の話者一覧へ反映されます</small></span>
+                <span><strong>外部アプリから選べるようにする</strong><small>オンにすると自動保存後、127.0.0.1:{bootstrap?.voicevox_api?.port || 50021} の話者一覧へ反映されます</small></span>
               </label>
               {selectedVoice.sourceType === "none" && selectedVoice.apiEnabled && <p className="api-profile-warning"><WarningCircle size={17} />参照なしでは声質が発話ごとに変わりやすいため、配信にはSpeaker Inversionまたは参照音声を推奨します。</p>}
               <div className="api-profile-grid">
@@ -1267,8 +1577,8 @@ function App() {
                 <label><span>利用条件・メモ（話者情報APIに表示）</span><textarea rows="3" value={selectedVoice.apiPolicy} onChange={(event) => updateSelectedVoice({ apiPolicy: event.target.value })} /></label>
               </details>
               <div className="api-profile-actions">
-                {selectedVoice.apiProfileId && <button className="danger-text-button" onClick={deleteSelectedVoiceProfile}><Trash size={17} />API登録を削除</button>}
-                <button className="primary-button" onClick={saveSelectedVoiceProfile}><FloppyDisk size={18} />{selectedVoice.apiEnabled ? "保存してAPIへ公開" : "API設定を保存"}</button>
+                <span>変更はこのPCのボイスライブラリへ自動保存されます</span>
+                <button className="secondary-button" onClick={() => persistVoiceLibrary({ announce: true })}><FloppyDisk size={18} />今すぐ保存</button>
               </div>
             </div>
           </section>}
@@ -1277,9 +1587,44 @@ function App() {
 
       {activeModal === "import" && <Modal title="文章を台本へ取り込む" eyebrow="TEXT IMPORT" onClose={() => setActiveModal(null)}><p className="modal-description">1行を1つの読み上げ単位として追加します。空行は無視されます。</p><textarea className="large-textarea" rows="12" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={'最初の文章を入力します。\n次の文章は改行して入力します。'} /><div className="modal-actions"><button className="secondary-button" onClick={() => setActiveModal(null)}>キャンセル</button><button className="primary-button" onClick={() => { const lines = splitImportedText(importText); if (lines.length) { mutateProject((current) => ({ ...current, lines: [...current.lines, ...lines] })); setSelectedLineId(lines[0].id); setImportText(""); setActiveModal(null); notify(`${lines.length}行を追加しました`, "success"); } }} disabled={!importText.trim()}><Plus size={19} />台本へ追加</button></div></Modal>}
 
-      {activeModal === "projects" && <Modal title="プロジェクト" eyebrow="LOCAL PROJECTS" onClose={() => setActiveModal(null)}><div className="project-file-actions"><button onClick={() => importFileRef.current?.click()}><UploadSimple size={19} />JSONを読み込む</button><button onClick={downloadProjectJson}><DownloadSimple size={19} />現在のJSONを保存</button></div><input ref={importFileRef} className="hidden-input" type="file" accept="application/json,.json" onChange={importProjectFile} /> <div className="saved-projects">{savedProjects.length ? savedProjects.map((saved) => <button key={saved.filename} onClick={() => loadSavedProject(saved.name)}><FileText size={21} /><span><strong>{saved.name}</strong><small>{new Date(saved.updated_at * 1000).toLocaleString("ja-JP")}</small></span></button>) : <div className="empty-state"><FolderOpen size={30} /><span>API側に保存されたプロジェクトはまだありません。</span></div>}</div></Modal>}
+      {activeModal === "projects" && <Modal title="プロジェクト管理" eyebrow="PROJECTS" onClose={() => setActiveModal(null)} scrollable>
+        <section className="project-create-panel">
+          <div className="project-create-heading">
+            <span><FolderPlus size={22} /></span>
+            <div><strong>新しいプロジェクト</strong><small>名前を付けて、空の台本から制作を始めます。</small></div>
+          </div>
+          <div className="project-create-form">
+            <input
+              value={newProjectName}
+              aria-label="新しいプロジェクト名"
+              placeholder="プロジェクト名"
+              onChange={(event) => setNewProjectName(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && !projectBusy) createProject(); }}
+            />
+            <button className="primary-button" onClick={createProject} disabled={projectBusy || !newProjectName.trim()}>
+              {projectBusy ? <SpinnerGap className="spin" size={19} /> : <Plus size={19} />}作成
+            </button>
+          </div>
+        </section>
+        <div className="project-list-heading"><strong>プロジェクト一覧</strong><span>{savedProjects.length}件</span></div>
+        <div className="saved-projects">
+          {savedProjects.length ? savedProjects.map((saved) => {
+            const isCurrent = saved.storage_name === activeProjectName;
+            return <article className={`saved-project-card ${isCurrent ? "current" : ""}`} key={saved.storage_name || saved.filename}>
+              <span className="saved-project-icon"><FileText size={22} /></span>
+              <span className="saved-project-info"><strong>{saved.name}</strong><small>{new Date(saved.updated_at * 1000).toLocaleString("ja-JP")} 更新</small></span>
+              <span className="saved-project-actions">
+                {isCurrent
+                  ? <span className="current-project-badge"><Check size={15} />開いています</span>
+                  : <button className="secondary-button" onClick={() => loadSavedProject(saved)} disabled={projectBusy}><FolderOpen size={17} />開く</button>}
+                <IconButton label={`${saved.name}を削除`} tone="danger" onClick={() => deleteSavedProject(saved)} disabled={projectBusy}><Trash size={17} /></IconButton>
+              </span>
+            </article>;
+          }) : <div className="empty-state"><FolderOpen size={30} /><span>まだプロジェクトがありません。<br />上の欄から新しく作成できます。</span></div>}
+        </div>
+      </Modal>}
 
-      {activeModal === "export" && <Modal title="動画・配信用パッケージ" eyebrow="PRODUCTION EXPORT" onClose={() => setActiveModal(null)} wide><div className="export-layout"><section><div className="export-readiness"><span className={staleOrMissing.length ? "warning" : "ready"}>{staleOrMissing.length ? <WarningCircle size={25} /> : <Check size={25} />}</span><div><strong>{staleOrMissing.length ? `${staleOrMissing.length}行の生成が必要です` : "すべて書き出せます"}</strong><p>{generatedCount}/{project.lines.length}行 · 音声 {formatDuration(projectSeconds)}</p></div>{staleOrMissing.length > 0 && <button className="secondary-button" onClick={generateAllMissing} disabled={!model.loaded || queueCount > 0}><MagicWand size={18} />不足分を生成</button>}</div><label className="gap-setting"><span>行間の無音</span><input type="range" min="0" max="2000" step="50" value={project.exportSettings.gapMs} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, gapMs: Number(event.target.value) } }))} /><strong>{project.exportSettings.gapMs} ms</strong></label><div className="export-checks">{[["includeMaster", "連結したmaster.wav", "動画編集・配信素材の完成音声", VideoCamera], ["includeSrt", "SRT字幕", "一般的な動画編集ソフト向け", FileText], ["includeVtt", "WebVTT字幕", "Web配信・プレイヤー向け", FileText], ["includeCsv", "CSVタイムライン", "開始・終了・声・シードを記録", ListNumbers]].map(([key, title, detail, Icon]) => <label key={key}><input type="checkbox" checked={project.exportSettings[key]} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, [key]: event.target.checked } }))} /><Icon size={21} /><span><strong>{title}</strong><small>{detail}</small></span></label>)}</div></section><aside className="package-preview"><span className="package-icon"><Export size={31} /></span><h3>ZIPに含まれるもの</h3><ul><li>行ごとのPCM WAV</li><li>連結済みマスター音声</li><li>SRT / VTT字幕</li><li>CSV / JSONタイムライン</li><li>FFmpeg concatリスト</li><li>再編集可能なプロジェクトJSON</li></ul><button className="primary-button" onClick={exportProduction} disabled={exportBusy || staleOrMissing.length > 0}>{exportBusy ? <SpinnerGap className="spin" size={20} /> : <DownloadSimple size={20} />}{exportBusy ? "準備中…" : "制作パッケージを保存"}</button></aside></div></Modal>}
+      {activeModal === "export" && <Modal title="動画・配信用パッケージ" eyebrow="PRODUCTION EXPORT" onClose={() => setActiveModal(null)} wide><div className="export-layout"><section><div className="export-readiness"><span className={staleOrMissing.length ? "warning" : "ready"}>{staleOrMissing.length ? <WarningCircle size={25} /> : <Check size={25} />}</span><div><strong>{staleOrMissing.length ? `${staleOrMissing.length}行の生成が必要です` : "すべて書き出せます"}</strong><p>{generatedCount}/{project.lines.length}行 · 音声 {formatDuration(projectSeconds)}</p></div>{staleOrMissing.length > 0 && <button className="secondary-button" onClick={generateAllMissing} disabled={!model.loaded || queueCount > 0}><MagicWand size={18} />不足分を生成</button>}</div><label className="gap-setting"><span>行間の無音</span><input type="range" min="0" max="2000" step="50" value={project.exportSettings.gapMs} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, gapMs: Number(event.target.value) } }))} /><strong>{project.exportSettings.gapMs} ms</strong></label><div className="export-checks">{[["includeMaster", "連結したmaster.wav", "動画編集・配信素材の完成音声", VideoCamera], ["includeSrt", "SRT字幕", "一般的な動画編集ソフト向け", FileText], ["includeVtt", "WebVTT字幕", "Web配信・プレイヤー向け", FileText], ["includeCsv", "CSVタイムライン", "開始・終了・声・シードを記録", ListNumbers]].map(([key, title, detail, Icon]) => <label key={key}><input type="checkbox" checked={project.exportSettings[key]} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, [key]: event.target.checked } }))} /><Icon size={21} /><span><strong>{title}</strong><small>{detail}</small></span></label>)}</div></section><aside className="package-preview"><span className="package-icon"><Export size={31} /></span><h3>ZIPに含まれるもの</h3><ul><li>行ごとのPCM WAV</li><li>連結済みマスター音声</li><li>SRT / VTT字幕</li><li>タイムライン情報</li><li>FFmpeg concatリスト</li><li>再編集用のプロジェクトデータ</li></ul><button className="primary-button" onClick={exportProduction} disabled={exportBusy || staleOrMissing.length > 0}>{exportBusy ? <SpinnerGap className="spin" size={20} /> : <DownloadSimple size={20} />}{exportBusy ? "準備中…" : "制作パッケージを保存"}</button></aside></div></Modal>}
     </div>
   );
 }

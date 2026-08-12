@@ -18,21 +18,24 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - `StudioEngine` owns one resident `IrodoriInferenceRuntime` and one FIFO generation worker.
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
 - The frontend communicates only with the local Studio HTTP API.
-- Generated files and server-saved projects live under ignored `workspace/`.
+- Generated files, server-saved projects and the shared voice library live under ignored `workspace/`.
 
 ## Source map
 
 ```text
 src/
   App.jsx                 Main application and current Script/Live workspaces
+  audio-output.js         Browser output-device discovery and preference helpers
   defaults.js            Persistent project schema and migration defaults
   project-state.js       Pure line, take and ordering operations
   emoji-data.js          Official Irodori performance emoji metadata
+  voice-library.js       Server profile/project voice reconciliation and payload mapping
 studio_backend/
   engine.py              Resident runtime and FIFO synthesis queue
   models.py              HTTP request schemas
   exporter.py            WAV/subtitle/timeline production ZIP
-  voice_profiles.py      Stable VOICEVOX speaker/style persistence
+  project_store.py       Atomic local project persistence
+  voice_profiles.py      Shared Voice Library and stable VOICEVOX speaker/style persistence
   voicevox_api.py        Compatibility endpoints
   runtime_paths.py       External Irodori-TTS discovery and validation
 server.py                Local API, static SPA host and process orchestration
@@ -76,7 +79,11 @@ For changes to synthesis, voice selection, take handling or export, also run Stu
 
 Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. Add migrations or safe defaults there whenever fields change. Existing single-audio lines are migrated into `takes[0]`; keep that compatibility when editing the take model.
 
-Server-saved voice profiles require stable `profile_id`, `speaker_uuid` and `style_id`. Do not regenerate them during ordinary edits.
+`studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
+
+Server-saved voice profiles under `workspace/voices/profiles.json` are the source of truth for the shared Voice Library and require stable `profile_id`, `speaker_uuid` and `style_id`. Projects retain a compatible snapshot plus the profile ID. Reconcile by ID on load; only use a unique exact-name match to migrate legacy projects. Do not regenerate stable IDs during ordinary edits. The legacy `workspace/voicevox/profiles.json` is copied once when the shared store does not yet exist.
+
+Playback volume and output routing are browser-local preferences. Both Script and Live render the same state and apply it to the single shared audio element. Device discovery requests browser audio permission once at startup, stops the temporary input stream immediately, and falls back to the system default without blocking Studio when permission or `setSinkId()` is unavailable.
 
 ## Product decisions
 

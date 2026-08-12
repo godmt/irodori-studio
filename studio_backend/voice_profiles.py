@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -14,8 +15,19 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def migrate_voice_profile_store(legacy_path: Path, current_path: Path) -> bool:
+    """Copy the legacy VOICEVOX-owned store into the shared voice library once."""
+    if current_path.exists() or not legacy_path.is_file():
+        return False
+    current_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = current_path.with_suffix(".migration.tmp")
+    shutil.copy2(legacy_path, temporary)
+    temporary.replace(current_path)
+    return True
+
+
 class VoiceProfileStore:
-    """Persistent, server-owned voice profiles exposed through the compatibility API."""
+    """Persistent, server-owned profiles shared by Studio and compatibility clients."""
 
     def __init__(self, path: Path) -> None:
         self.path = path

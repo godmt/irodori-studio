@@ -6,7 +6,7 @@ Before making substantial visual changes, use the Product Design plugin's `get-c
 
 When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
 
-Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so a frontend-only demonstration can be handed to Sites. The actual synthesizer remains a local Python application and is not supplied by static hosting. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+Build app UI in `src/`. Irodori Studio is a local-only SPA served by its FastAPI application from `dist/client`; it has no Sites, Cloudflare Pages, Worker, or static-hosting handoff. Do not add `.openai/hosting.json` or cloud-hosting build artifacts.
 
 ## Product decisions for this prototype
 
@@ -15,10 +15,17 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Core workflows must be real, not mocked: load a local checkpoint, queue synthesis, play one line or continuously from a selected line, reorder/duplicate/delete lines, and export production files.
 - Streaming support means a low-friction live input queue with stop/interrupt and automatic playback.
 - Video-production support means persistent projects, batch generation, a joined master WAV, per-line WAV files, SRT/VTT subtitles, CSV timing data, and an FFmpeg concat list.
+- Project management is a user-facing create/open/delete workflow backed by server-owned local persistence. Never expose JSON import/export or other storage-format language in the Studio GUI. Preserve the current project before switching so opening another project never appears to discard the user's work.
+- The Script workspace has one authoritative line list: the editable cards in the main stage. Do not duplicate those lines in the left sidebar, and do not add a sidebar "add line" action when the main list already provides "選択行の下に追加". Keep the sidebar for project summary, bulk text addition, and voice access.
 - Japanese body text must remain comfortably readable; avoid tiny labels and low-contrast gray text.
-- Playback volume is a browser-local setting, available in the script toolbar above the reading list, and must affect all in-app playback without altering generated or exported audio files.
+- Playback volume is a browser-local setting, available in both the script toolbar and Live console, and must affect all in-app playback without altering generated or exported audio files.
+- Audio output routing is also browser-local. On Studio launch, request access using only the browser's native permission dialog, immediately stop the temporary input stream, then enumerate permitted output devices and expose them in the Live console so virtual audio cables can route playback into OBS. Never add a Studio-owned permission modal. If access is denied or routing is unsupported, lock playback to the system default without blocking the rest of the app. Apply the selected sink to all in-app playback and return to the system default when it disconnects.
+- Keep the Live audio controls compact: the output-device and playback-volume icons replace redundant visible text labels. Preserve accessible names on the select and range input.
+- Output devices are discovered from the browser permission result and selected only through the dropdown. Do not add device add, remove, refresh, or management buttons.
+- Live audio controls must never overlap. Keep the closed output selector compact and truncate long device names; show the full names only in the opened dropdown. Keep the speaker icon directly adjacent to the volume slider without a placeholder label gap, and move the control group onto its own row at narrower widths.
+- Show the same output-device selector and playback-volume control in both Script and Live. They are two views of one browser-local audio setting: changing either control must immediately update the other view and all in-app playback.
 - Every script line exposes a refresh-icon action that adds and selects a new take using the current text, voice, and synthesis parameters without starting playback.
-- VOICEVOX-compatible speaker/style definitions are saved by the local server, not only in browser storage. A Style ID and Speaker UUID stay stable across edits and restarts until that API registration is explicitly deleted.
+- The server-owned shared Voice Library at `workspace/voices/profiles.json` is the source of truth for voice definitions, including Speaker Inversion, reference audio, LoRA, default caption and VOICEVOX publication settings. Voice edits auto-save independently of project saves. Projects keep a compatible snapshot and stable profile reference; restore by profile ID, with a unique exact-name match only for legacy migration. A Style ID and Speaker UUID stay stable across edits and restarts until the voice is explicitly deleted.
 - External speech clients use the separate local compatibility endpoint on `127.0.0.1:50021`; Studio and the compatibility API share the same resident model and FIFO synthesis queue.
 - The voice library keeps its header visible and gives the modal body a dedicated vertical scroll area, so API details and save/delete actions remain reachable at ordinary desktop and mobile viewport heights.
 - Use Phosphor Icons for interface icons. Do not substitute emoji or handcrafted SVG/CSS icons.

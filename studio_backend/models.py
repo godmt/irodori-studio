@@ -78,7 +78,7 @@ class ProductionExportRequest(BaseModel):
 
 
 class DialogRequest(BaseModel):
-    kind: Literal["checkpoint", "speaker", "reference", "lora", "project"]
+    kind: Literal["checkpoint", "speaker", "reference", "lora"]
     multiple: bool = False
 
 

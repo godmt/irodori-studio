@@ -33,9 +33,11 @@ export const api = {
   jobs: () => request("/api/jobs").then((response) => response.json()),
   cancelJob: (id) => request(`/api/jobs/${id}/cancel`, { method: "POST" }).then((response) => response.json()),
   cancelAll: () => request("/api/jobs/cancel-all", { method: "POST" }).then((response) => response.json()),
+  createProject: (name, project) => request("/api/projects/create", { method: "POST", body: JSON.stringify({ name, project }) }).then((response) => response.json()),
   saveProject: (name, project) => request("/api/projects/save", { method: "POST", body: JSON.stringify({ name, project }) }).then((response) => response.json()),
   projects: () => request("/api/projects").then((response) => response.json()),
   loadProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`).then((response) => response.json()),
+  deleteProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" }).then((response) => response.json()),
   dialog: (kind, multiple = false) => request("/api/dialog", { method: "POST", body: JSON.stringify({ kind, multiple }) }).then((response) => response.json()),
   exportProject: async (payload) => {
     const response = await request("/api/export", { method: "POST", body: JSON.stringify(payload) });
