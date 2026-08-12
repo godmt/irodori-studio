@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+# ruff: noqa: E402
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import sys
+import threading
+import webbrowser
+from pathlib import Path
+from typing import Any
+
+STUDIO_ROOT = Path(__file__).resolve().parent
+if str(STUDIO_ROOT) not in sys.path:
+    sys.path.insert(0, str(STUDIO_ROOT))
+
+from studio_backend.runtime_paths import resolve_irodori_root
+
+_bootstrap_parser = argparse.ArgumentParser(add_help=False)
+_bootstrap_parser.add_argument("--irodori-root")
+_bootstrap_args, _ = _bootstrap_parser.parse_known_args()
+try:
+    IRODORI_ROOT = resolve_irodori_root(STUDIO_ROOT, _bootstrap_args.irodori_root)
+except RuntimeError as exc:
+    raise SystemExit(str(exc)) from exc
+if str(IRODORI_ROOT) not in sys.path:
+    sys.path.insert(0, str(IRODORI_ROOT))
+
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from irodori_tts.inference_runtime import (
+    default_runtime_device,
+    list_available_runtime_devices,
+    list_available_runtime_precisions,
+)
+
+from studio_backend.engine import StudioEngine
+from studio_backend.exporter import create_production_zip, safe_stem
+from studio_backend.models import (
+    DialogRequest,
+    ModelLoadRequest,
+    ProductionExportRequest,
+    ProjectSaveRequest,
+    SynthesisPayload,
+    VoiceProfileRequest,
+)
+from studio_backend.voice_profiles import VoiceProfileStore
+from studio_backend.voicevox_api import create_voicevox_app
+
+WORKSPACE = STUDIO_ROOT / "workspace"
+AUDIO_DIR = WORKSPACE / "audio"
+EXPORT_DIR = WORKSPACE / "exports"
+PROJECT_DIR = WORKSPACE / "projects"
+VOICEVOX_DIR = WORKSPACE / "voicevox"
+for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, VOICEVOX_DIR):
+    directory.mkdir(parents=True, exist_ok=True)
+
+engine = StudioEngine(audio_dir=AUDIO_DIR)
+voice_profile_store = VoiceProfileStore(VOICEVOX_DIR / "profiles.json")
+voicevox_app = create_voicevox_app(engine=engine, profile_store=voice_profile_store)
+voicevox_runtime: dict[str, Any] = {
+    "enabled": True,
+    "host": "127.0.0.1",
+    "port": 50021,
+}
+app = FastAPI(title="Irodori Studio Local API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://terminal.local:4173",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["*"],
+)
+
+
+def _default_checkpoint() -> str:
+    preferred = IRODORI_ROOT / "models" / "Irodori-TTS-v4.1-Small" / "model.safetensors"
+    if preferred.is_file():
+        return str(preferred.resolve())
+    candidates = sorted((IRODORI_ROOT / "models").glob("**/model.safetensors"))
+    return str(candidates[0].resolve()) if candidates else "Aratako/Irodori-TTS-v4.1-Small"
+
+
+def _asset_scan() -> dict[str, list[str]]:
+    models_root = IRODORI_ROOT / "models"
+    outputs_root = IRODORI_ROOT / "outputs"
+    checkpoints: list[str] = []
+    speakers: list[str] = []
+    references: list[str] = []
+    loras: list[str] = []
+    if models_root.exists():
+        checkpoints = [str(path.resolve()) for path in models_root.glob("**/model.safetensors")]
+        checkpoints.extend(str(path.resolve()) for path in models_root.glob("**/checkpoint_*.pt"))
+    if outputs_root.exists():
+        for path in outputs_root.glob("**/*.safetensors"):
+            lowered = path.name.lower()
+            if "speaker" in lowered:
+                speakers.append(str(path.resolve()))
+            elif path.name == "model.safetensors" or path.name.startswith("checkpoint_"):
+                checkpoints.append(str(path.resolve()))
+        for extension in ("*.wav", "*.flac", "*.mp3", "*.m4a", "*.ogg"):
+            references.extend(str(path.resolve()) for path in outputs_root.glob(f"**/{extension}"))
+        loras = [str(path.parent.resolve()) for path in outputs_root.glob("**/adapter_config.json")]
+    return {
+        "checkpoints": sorted(set(checkpoints)),
+        "speaker_embeddings": sorted(set(speakers)),
+        "reference_audio": sorted(set(references))[:500],
+        "lora_adapters": sorted(set(loras)),
+    }
+
+
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "service": "irodori-studio",
+        "irodori_root": str(IRODORI_ROOT),
+        "model": engine.status(),
+    }
+
+
+@app.get("/api/bootstrap")
+def bootstrap() -> dict[str, Any]:
+    devices = list_available_runtime_devices()
+    default_device = default_runtime_device()
+    return {
+        "default_checkpoint": _default_checkpoint(),
+        "devices": devices,
+        "precisions": {device: list_available_runtime_precisions(device) for device in devices},
+        "default_device": default_device,
+        "assets": _asset_scan(),
+        "model": engine.status(),
+        "voice_profiles": voice_profile_store.list(),
+        "voicevox_api": dict(voicevox_runtime),
+        "irodori_root": str(IRODORI_ROOT),
+    }
+
+
+@app.post("/api/assets/refresh")
+def refresh_assets() -> dict[str, list[str]]:
+    return _asset_scan()
+
+
+@app.get("/api/voice-profiles")
+def list_voice_profiles() -> list[dict[str, Any]]:
+    return voice_profile_store.list()
+
+
+@app.post("/api/voice-profiles")
+def save_voice_profile(request: VoiceProfileRequest) -> dict[str, Any]:
+    try:
+        return voice_profile_store.upsert(request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Voice profile not found") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/voice-profiles/{profile_id}")
+def delete_voice_profile(profile_id: str) -> dict[str, bool]:
+    try:
+        voice_profile_store.delete(profile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Voice profile not found") from exc
+    return {"deleted": True}
+
+
+@app.post("/api/model/load")
+def load_model(request: ModelLoadRequest) -> dict[str, Any]:
+    try:
+        return engine.load_model(request)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/model/unload")
+def unload_model() -> dict[str, Any]:
+    try:
+        return engine.unload_model()
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/model/status")
+def model_status() -> dict[str, Any]:
+    return engine.status()
+
+
+@app.post("/api/synthesis", status_code=202)
+def synthesize(payload: SynthesisPayload) -> dict[str, Any]:
+    if not engine.status().get("loaded"):
+        raise HTTPException(status_code=409, detail="モデルを先にロードしてください")
+    return engine.create_job(payload)
+
+
+@app.get("/api/jobs")
+def list_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    return engine.list_jobs(max(1, min(limit, 200)))
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, Any]:
+    try:
+        return engine.get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, Any]:
+    try:
+        return engine.cancel_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+
+
+@app.post("/api/jobs/cancel-all")
+def cancel_all_jobs() -> list[dict[str, Any]]:
+    return engine.cancel_all()
+
+
+@app.get("/api/audio/{audio_file}")
+def get_audio(audio_file: str) -> FileResponse:
+    path = (AUDIO_DIR / Path(audio_file).name).resolve()
+    if path.parent != AUDIO_DIR.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Audio not found")
+    return FileResponse(path, media_type="audio/wav", filename=path.name)
+
+
+@app.get("/api/projects")
+def list_projects() -> list[dict[str, Any]]:
+    projects = []
+    for path in sorted(
+        PROJECT_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True
+    ):
+        projects.append(
+            {
+                "name": path.stem,
+                "filename": path.name,
+                "updated_at": path.stat().st_mtime,
+            }
+        )
+    return projects
+
+
+@app.get("/api/projects/{project_name}")
+def load_project(project_name: str) -> dict[str, Any]:
+    path = PROJECT_DIR / f"{safe_stem(project_name)}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Project not found")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.post("/api/projects/save")
+def save_project(request: ProjectSaveRequest) -> dict[str, Any]:
+    path = PROJECT_DIR / f"{safe_stem(request.name)}.json"
+    path.write_text(json.dumps(request.project, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"saved": True, "name": path.stem, "path": str(path)}
+
+
+@app.post("/api/export")
+def export_project(request: ProductionExportRequest) -> FileResponse:
+    try:
+        zip_path = create_production_zip(
+            request,
+            audio_dir=AUDIO_DIR,
+            export_dir=EXPORT_DIR,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(zip_path, media_type="application/zip", filename=zip_path.name)
+
+
+@app.post("/api/dialog")
+def open_dialog(request: DialogRequest) -> dict[str, list[str]]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        paths: tuple[str, ...] | str
+        if request.kind == "lora":
+            paths = filedialog.askdirectory(title="LoRAアダプターを選択")
+        elif request.kind == "project":
+            paths = filedialog.askopenfilename(
+                title="プロジェクトJSONを選択", filetypes=[("JSON", "*.json")]
+            )
+        else:
+            filetypes = {
+                "checkpoint": [("Irodori checkpoint", "*.safetensors *.pt")],
+                "speaker": [("Speaker embedding", "*.safetensors")],
+                "reference": [("Audio", "*.wav *.flac *.mp3 *.m4a *.ogg")],
+            }[request.kind]
+            if request.multiple:
+                paths = filedialog.askopenfilenames(title="ファイルを選択", filetypes=filetypes)
+            else:
+                paths = filedialog.askopenfilename(title="ファイルを選択", filetypes=filetypes)
+        root.destroy()
+    except Exception as exc:
+        raise HTTPException(status_code=501, detail=f"File dialog unavailable: {exc}") from exc
+    if isinstance(paths, str):
+        values = [paths] if paths else []
+    else:
+        values = list(paths)
+    return {"paths": values}
+
+
+CLIENT_DIR = STUDIO_ROOT / "dist" / "client"
+if CLIENT_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=CLIENT_DIR, html=True), name="studio")
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _autoload_default_model() -> None:
+    try:
+        device = default_runtime_device()
+        precisions = list_available_runtime_precisions(device)
+        precision = "bf16" if "bf16" in precisions else "fp32"
+        print(f"[studio] loading {_default_checkpoint()} on {device}/{precision}")
+        engine.load_model(
+            ModelLoadRequest(
+                checkpoint=_default_checkpoint(),
+                model_device=device,
+                model_precision=precision,
+                codec_device=device,
+                codec_precision=precision,
+            )
+        )
+        print("[studio] model ready")
+    except Exception as exc:
+        print(f"[studio] automatic model load failed: {exc}", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the local Irodori Studio API and SPA.")
+    parser.add_argument("--irodori-root", default=str(IRODORI_ROOT))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--voicevox-api", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--voicevox-host", default="127.0.0.1")
+    parser.add_argument("--voicevox-port", type=int, default=50021)
+    parser.add_argument(
+        "--autoload-model", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--no-open", action="store_true")
+    args = parser.parse_args()
+    voicevox_runtime.update(
+        enabled=args.voicevox_api,
+        host=args.voicevox_host,
+        port=args.voicevox_port,
+    )
+    if not CLIENT_DIR.is_dir():
+        print("[studio] dist/client is missing. Run `npm run build` in irodori-studio.")
+    url = f"http://{args.host}:{args.port}/"
+    if args.voicevox_api:
+        if not _port_is_available(args.voicevox_host, args.voicevox_port):
+            raise SystemExit(
+                f"VOICEVOX compatibility port is already in use: "
+                f"{args.voicevox_host}:{args.voicevox_port}"
+            )
+        compatibility_app = create_voicevox_app(
+            engine=engine, profile_store=voice_profile_store, port=args.voicevox_port
+        )
+        compatibility_server = uvicorn.Server(
+            uvicorn.Config(
+                compatibility_app,
+                host=args.voicevox_host,
+                port=args.voicevox_port,
+                log_level="info",
+            )
+        )
+        threading.Thread(target=compatibility_server.run, daemon=True).start()
+        print(
+            f"[voicevox-api] http://{args.voicevox_host}:{args.voicevox_port}/ "
+            f"({len(voice_profile_store.list(enabled_only=True))} published styles)"
+        )
+    if args.autoload_model:
+        threading.Thread(target=_autoload_default_model, daemon=True).start()
+    if not args.no_open and args.host in {"127.0.0.1", "localhost"}:
+        threading.Timer(1.25, lambda: webbrowser.open(url)).start()
+    print(f"[studio] {url}")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

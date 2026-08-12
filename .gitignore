@@ -1,0 +1,10 @@
+/dist/
+/node_modules/
+/qa/
+/workspace/
+/.studio/
+/.venv/
+/__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/

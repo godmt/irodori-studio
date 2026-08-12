@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import csv
+import io
+import json
+import re
+import zipfile
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+from studio_backend.models import ProductionExportRequest
+
+
+@dataclass(frozen=True)
+class TimelineEntry:
+    index: int
+    line_id: str
+    text: str
+    caption: str
+    voice_name: str
+    seed: int | None
+    audio_name: str
+    start: float
+    end: float
+    duration: float
+
+
+def safe_stem(value: str, fallback: str = "irodori-project") -> str:
+    cleaned = re.sub(r"[^0-9A-Za-zぁ-んァ-ヶ一-龠々ー_-]+", "-", value.strip())
+    cleaned = cleaned.strip("-_.")
+    return cleaned[:80] or fallback
+
+
+def _timecode(seconds: float, *, srt: bool) -> str:
+    total_ms = max(0, round(float(seconds) * 1000))
+    hours, remainder = divmod(total_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, millis = divmod(remainder, 1000)
+    separator = "," if srt else "."
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}{separator}{millis:03d}"
+
+
+def _read_mono(path: Path) -> tuple[np.ndarray, int]:
+    audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
+    mono = audio.mean(axis=1)
+    return mono, int(sample_rate)
+
+
+def _resample_linear(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    if source_rate == target_rate or len(audio) == 0:
+        return audio
+    target_length = max(1, round(len(audio) * target_rate / source_rate))
+    source_x = np.linspace(0.0, 1.0, num=len(audio), endpoint=False)
+    target_x = np.linspace(0.0, 1.0, num=target_length, endpoint=False)
+    return np.interp(target_x, source_x, audio).astype(np.float32)
+
+
+def _build_srt(entries: list[TimelineEntry]) -> str:
+    chunks = []
+    for item in entries:
+        chunks.append(
+            f"{item.index}\n{_timecode(item.start, srt=True)} --> "
+            f"{_timecode(item.end, srt=True)}\n{item.text}\n"
+        )
+    return "\n".join(chunks)
+
+
+def _build_vtt(entries: list[TimelineEntry]) -> str:
+    chunks = ["WEBVTT\n"]
+    for item in entries:
+        chunks.append(
+            f"{_timecode(item.start, srt=False)} --> {_timecode(item.end, srt=False)}\n"
+            f"{item.text}\n"
+        )
+    return "\n".join(chunks)
+
+
+def _build_csv(entries: list[TimelineEntry]) -> str:
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=list(asdict(entries[0]).keys()))
+    writer.writeheader()
+    writer.writerows(asdict(item) for item in entries)
+    return stream.getvalue()
+
+
+def create_production_zip(
+    request: ProductionExportRequest,
+    *,
+    audio_dir: Path,
+    export_dir: Path,
+) -> Path:
+    audio_dir = audio_dir.resolve()
+    export_dir.mkdir(parents=True, exist_ok=True)
+    loaded: list[tuple[object, Path, np.ndarray, int]] = []
+    for segment in request.segments:
+        candidate = (audio_dir / Path(segment.audio_file).name).resolve()
+        if candidate.parent != audio_dir or not candidate.is_file():
+            raise FileNotFoundError(f"Generated audio not found: {segment.audio_file}")
+        audio, sample_rate = _read_mono(candidate)
+        loaded.append((segment, candidate, audio, sample_rate))
+
+    target_rate = loaded[0][3]
+    gap_samples = round(target_rate * request.gap_ms / 1000)
+    gap = np.zeros(gap_samples, dtype=np.float32)
+    cursor = 0.0
+    entries: list[TimelineEntry] = []
+    mastered: list[np.ndarray] = []
+    line_files: list[tuple[Path, str]] = []
+
+    for index, (segment, source_path, audio, sample_rate) in enumerate(loaded, start=1):
+        audio = _resample_linear(audio, sample_rate, target_rate)
+        duration = len(audio) / target_rate
+        audio_name = f"{index:03d}_{safe_stem(segment.id, f'line-{index}')}.wav"
+        entries.append(
+            TimelineEntry(
+                index=index,
+                line_id=segment.id,
+                text=segment.text,
+                caption=segment.caption,
+                voice_name=segment.voice_name,
+                seed=segment.seed,
+                audio_name=f"lines/{audio_name}",
+                start=cursor,
+                end=cursor + duration,
+                duration=duration,
+            )
+        )
+        mastered.append(audio)
+        line_files.append((source_path, audio_name))
+        cursor += duration
+        if index < len(loaded):
+            mastered.append(gap)
+            cursor += request.gap_ms / 1000
+
+    stem = safe_stem(request.project_name)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    zip_path = export_dir / f"{stem}-{timestamp}.zip"
+    master_audio = np.concatenate(mastered) if mastered else np.zeros(1, dtype=np.float32)
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for source_path, audio_name in line_files:
+            archive.write(source_path, f"lines/{audio_name}")
+
+        if request.include_master:
+            master_buffer = io.BytesIO()
+            sf.write(master_buffer, master_audio, target_rate, format="WAV", subtype="PCM_16")
+            archive.writestr("master.wav", master_buffer.getvalue())
+        if request.include_srt:
+            archive.writestr("subtitles.srt", _build_srt(entries).encode("utf-8-sig"))
+        if request.include_vtt:
+            archive.writestr("subtitles.vtt", _build_vtt(entries).encode("utf-8"))
+        if request.include_csv:
+            archive.writestr("timeline.csv", _build_csv(entries).encode("utf-8-sig"))
+
+        concat_lines = ["ffconcat version 1.0"]
+        for entry in entries:
+            concat_lines.append(f"file '{entry.audio_name}'")
+            concat_lines.append(f"duration {entry.duration:.6f}")
+        archive.writestr("ffconcat.txt", ("\n".join(concat_lines) + "\n").encode("utf-8"))
+        archive.writestr(
+            "timeline.json",
+            json.dumps([asdict(item) for item in entries], ensure_ascii=False, indent=2),
+        )
+        archive.writestr(
+            "project.json",
+            json.dumps(request.project, ensure_ascii=False, indent=2),
+        )
+        archive.writestr(
+            "README.txt",
+            (
+                "Irodori Studio production export\n\n"
+                f"Sample rate: {target_rate} Hz\n"
+                f"Lines: {len(entries)}\n"
+                f"Inter-line gap: {request.gap_ms} ms\n"
+                "master.wav: joined program audio\n"
+                "lines/: individual generated WAV files\n"
+                "subtitles.srt / subtitles.vtt: subtitle tracks\n"
+                "timeline.csv / timeline.json: edit timing metadata\n"
+                "ffconcat.txt: FFmpeg concat demuxer input\n"
+            ).encode(),
+        )
+    return zip_path
