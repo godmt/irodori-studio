@@ -32,6 +32,12 @@ class RecordingDatasetStore:
             raise KeyError(dataset_id)
         return path
 
+    def dataset_directory(self, dataset_id: str) -> Path:
+        directory = self._dataset_directory(dataset_id)
+        if not (directory / "dataset.json").is_file():
+            raise KeyError(dataset_id)
+        return directory
+
     def _manifest_path(self, dataset_id: str) -> Path:
         return self._dataset_directory(dataset_id) / "dataset.json"
 

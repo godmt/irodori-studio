@@ -25,20 +25,26 @@ Current scope:
 
 The Recorder UI, audio conversion and device discovery live under `src/features/recorder`; server-owned dataset persistence lives in `studio_backend/recording_datasets.py`. The official 120-prompt starter corpus is versioned with Studio so recording remains available without running the external Irodori-TTS frontend.
 
-## Training — planned
+## Training — implemented foundation
 
 Provide guided local workflows around the external Irodori-TTS checkout.
 
-Expected scope:
+Current scope:
 
-- Select a Studio recording dataset or add one/multiple long single-speaker recordings
-- Automated resampling, denoise checks, silence segmentation and transcription
+- Select a named Studio recording dataset directly
+- Speaker Inversion as the recommended default and LoRA as an advanced path
+- Named models with stable Studio-owned output directories
+- DACVAE manifest preparation through the external Irodori-TTS checkout
+- Background process progress, logs, cancellation and recoverable job metadata
+- Completed Speaker Inversion and LoRA asset discovery by the Voice Library
+
+Future additions:
+
+- Add one or multiple long single-speaker recordings and guided segmentation/transcription
 - Dataset validation and a small exception queue rather than full manual labeling
-- Speaker Inversion setup, progress, checkpoints and comparison playback
-- LoRA dataset preparation and training as an advanced path
-- Model/embedding/adapter registration directly into the Voice Library
+- Checkpoint comparison playback and one-click Voice Library profile creation
 
-Training jobs should run as explicit background processes with logs, cancellation boundaries and recoverable job metadata. The UI must not conceal destructive preprocessing or overwrite source recordings.
+Training jobs run as explicit background processes with logs, cancellation boundaries and recoverable job metadata. Preprocessing writes only to the job workspace and never overwrites source recordings.
 
 ## Architecture direction
 

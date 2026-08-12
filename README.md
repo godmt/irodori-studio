@@ -1,6 +1,6 @@
 # Irodori Studio
 
-Irodori Studioは、独立してクローンした[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)をローカル制作環境として利用するSPAです。台本制作、複数テイク管理、ライブ配信、動画素材の書き出し、VOICEVOX互換APIを一つの画面と常駐ランタイムへまとめます。
+Irodori Studioは、独立してクローンした[Irodori-TTS](https://github.com/Aratako/Irodori-TTS)をローカル制作環境として利用するSPAです。台本制作、複数テイク管理、ライブ配信、録音、ボイス学習、動画素材の書き出し、VOICEVOX互換APIを一つの画面と常駐ランタイムへまとめます。
 
 StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTSの場所を一度指定すると、StudioがそのPython環境と推論ランタイムを使ってモデルを起動します。Gradioサーバーや別のIrodori APIサーバーを先に起動する必要はありません。
 
@@ -16,6 +16,7 @@ StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTS�
 - 配信用FIFOキュー、自動再生、停止、再生音量、OBS向け音声出力デバイス選択
 - Irodori Starter 120／AICA Character Core 200／AICA Full 500の段階切り換え、波形・音量確認、試聴、採用、録り直し、進捗管理
 - 名前付き録音データセットの作成・選択・削除と、学習用メタデータの自動保存
+- 録音データセットからのSpeaker Inversion／LoRA学習、進捗・停止・履歴管理、名前付きモデル保存
 - VOICEVOX互換APIと永続するSpeaker/Style ID
 - 行別WAV、master WAV、SRT、VTT、CSV、JSON、FFmpeg concat listのZIP書き出し
 
@@ -141,11 +142,19 @@ Browser
 
 録音画面では、話者や収録目的ごとに名前を付けた録音データセットを作成・選択・削除できます。録音は全段階で共通のルートデータセットとして扱い、48 kHz・モノラル・PCM 16-bit WAVへ変換して`workspace/recordings/`へ自動保存します。Core 200で採用した録音は、同じデータセットのFull 500でもそのまま採用済みとして扱われます。
 
-各データセットには管理情報の`dataset.json`、採用済み音声だけを列挙する学習用`dataset.jsonl`、音声を保持する`wavs/`があり、録音や採用のたびにStudioが更新します。外部サービスへの送信や手動のZIP書き出しは必要ありません。次に実装するトレーニング画面は、この一覧と安定したデータセットIDを直接使用します。以前のブラウザー保存録音がある場合は、最初の読み込み時に名前付きデータセットへ安全に移してから元データを消去します。
+各データセットには管理情報の`dataset.json`、採用済み音声だけを列挙する学習用`dataset.jsonl`、音声を保持する`wavs/`があり、録音や採用のたびにStudioが更新します。外部サービスへの送信や手動のZIP書き出しは必要ありません。学習タブは、この一覧と安定したデータセットIDを直接使用します。以前のブラウザー保存録音がある場合は、最初の読み込み時に名前付きデータセットへ安全に移してから元データを消去します。
 
 AICAの文章には出典、固定した上流バージョン、CC0 1.0 Universalを記録します。AICAの文章と、新しく収録した音声の権利条件は別に扱います。
 
 AICA corpusの出典とライセンスは[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)を参照してください。
+
+## 学習スタジオ
+
+上部の「学習」から、録音スタジオで作成したデータセットを直接選択します。モデル名を入力し、学習方法を選んで開始します。既定は、基本モデルを変更せず話者性だけを軽量に学ぶSpeaker Inversionです。LoRAも同じ画面から選択できますが、より多くの録音、GPUメモリ、学習時間が必要な上級者向けの選択肢です。
+
+Studioは採用済み音声を学習ジョブ内へ複製し、冒頭と末尾だけを検出して180msの余白を残して無音をカットします。文中の間や演技上の沈黙は維持します。その後、Irodori-TTSの`prepare_manifest.py`で音量を-16 dBへ正規化してDACVAE latentへ変換し、外部リポジトリの公式v4-Small設定と`train.py`をバックグラウンドで実行します。開始時にはGPUメモリを確保するため、読み上げ用の常駐モデルを自動的にアンロードします。学習画面にはデータ準備、ステップ進捗、停止、完了・失敗履歴が表示され、元の録音WAVは変更しません。前処理の件数とカット時間はジョブ内の`preprocessing.json`に記録します。
+
+学習済みモデルは名前と録音データセットの関係を`studio-model.json`へ記録し、学習履歴とは独立して保持します。Speaker InversionとLoRAの成果物はボイスライブラリの候補として検出されます。
 
 ## プロジェクト管理
 
@@ -168,10 +177,13 @@ Studio自身の実行データは`workspace/`へ保存します。
 | `workspace/audio/` | 生成WAVと生成メタデータ |
 | `workspace/projects/` | Studioで保存したローカルプロジェクト |
 | `workspace/recordings/` | 名前付き録音データセット、採用済み学習マニフェスト、録音WAV |
+| `workspace/training/` | 学習ジョブの設定、前後無音を整えた学習用WAV、前処理latent、ログ、履歴 |
+| `workspace/models/speaker-embeddings/` | 名前付きSpeaker Inversionモデル |
+| `workspace/models/lora/` | 名前付きLoRAモデル |
 | `workspace/exports/` | 動画・配信用ZIP |
 | `workspace/voices/profiles.json` | ボイスライブラリ本体、固定Style ID、API公開設定 |
 
-`workspace/`、`.studio/`、モデル、個人音声はGit管理されません。ブラウザー側の作業中プロジェクトは`localStorage`にも自動保存されます。録音データセットとボイスライブラリはプロジェクトとは独立してローカルサーバーへ自動保存され、別の制作プロジェクトや将来のトレーニングから利用できます。プロジェクトを開き直すと安定したプロフィールIDでボイス設定を復元します。旧`workspace/voicevox/profiles.json`は初回起動時に新しい保存先へ安全に移行されます。
+`workspace/`、`.studio/`、モデル、個人音声はGit管理されません。ブラウザー側の作業中プロジェクトは`localStorage`にも自動保存されます。録音データセット、学習モデル、ボイスライブラリはプロジェクトとは独立してローカルサーバーへ自動保存され、別の制作プロジェクトから利用できます。プロジェクトを開き直すと安定したプロフィールIDでボイス設定を復元します。旧`workspace/voicevox/profiles.json`は初回起動時に新しい保存先へ安全に移行されます。
 
 ## VOICEVOX互換API
 

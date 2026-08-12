@@ -61,6 +61,23 @@ class RecordingDatasetCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+class TrainingJobCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    dataset_id: str = Field(min_length=1, max_length=96)
+    method: Literal["speaker_inversion", "lora"] = "speaker_inversion"
+    checkpoint: str | None = None
+    device: str = "cuda"
+    precision: Literal["fp32", "bf16"] = "bf16"
+    max_steps: int = Field(default=3000, ge=1, le=1_000_000)
+
+    @field_validator("checkpoint", mode="before")
+    @classmethod
+    def training_empty_checkpoint_to_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
 class ExportSegment(BaseModel):
     id: str
     text: str

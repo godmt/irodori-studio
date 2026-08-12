@@ -6,7 +6,7 @@ Irodori Studio owns the product experience and local orchestration. Irodori-TTS 
 
 | Repository | Responsibility |
 | --- | --- |
-| `irodori-studio` | React SPA, local FastAPI host, synthesis queue, project data, recording, exports, VOICEVOX compatibility and the future Training workflow |
+| `irodori-studio` | React SPA, local FastAPI host, synthesis queue, project data, recording, training orchestration, exports and VOICEVOX compatibility |
 | `Irodori-TTS` | model architecture, inference runtime, codec, Speaker Inversion, LoRA and training implementation |
 
 Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, or user-specific absolute paths into this repository.
@@ -19,7 +19,8 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
 - The frontend communicates only with the local Studio HTTP API.
 - Recorder microphone capture happens in the browser, then accepted and review recordings are saved through the local Studio HTTP API under ignored `workspace/recordings/`.
-- Generated files, server-saved projects, named recording datasets and the shared voice library live under ignored `workspace/`.
+- Training runs Irodori-TTS preprocessing and training in child processes. Studio owns job state, cancellation and output discovery but never copies the trainer source.
+- Generated files, server-saved projects, named recording datasets, training state, learned models and the shared voice library live under ignored `workspace/`.
 
 ## Source map
 
@@ -32,12 +33,14 @@ src/
   emoji-data.js          Official Irodori performance emoji metadata
   voice-library.js       Server profile/project voice reconciliation and payload mapping
   features/recorder/     Corpus UI, microphone capture, WAV conversion and named dataset management
+  features/training/     Guided Speaker Inversion/LoRA setup, progress and model history
 studio_backend/
   engine.py              Resident runtime and FIFO synthesis queue
   models.py              HTTP request schemas
   exporter.py            WAV/subtitle/timeline production ZIP
   project_store.py       Atomic local project persistence
   recording_datasets.py Named recording datasets and training-ready manifests
+  training_jobs.py      External Irodori-TTS preprocessing/training process manager
   voice_profiles.py      Shared Voice Library and stable VOICEVOX speaker/style persistence
   voicevox_api.py        Compatibility endpoints
   runtime_paths.py       External Irodori-TTS discovery and validation
@@ -85,6 +88,8 @@ Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. A
 `studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
 
 `studio_backend/recording_datasets.py` owns named datasets under `workspace/recordings/<dataset-id>/`. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The stable dataset ID and local API list are the contract for the Training workspace. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
+
+`studio_backend/training_jobs.py` owns job state under `workspace/training/<job-id>/`, invokes the configured external checkout's `prepare_manifest.py` and `train.py`, and writes final assets beneath `workspace/models/speaker-embeddings/` or `workspace/models/lora/`. `studio_backend/audio_preprocessing.py` makes job-local WAV copies, trims only leading/trailing silence at -45 dBFS with 10 ms analysis windows and 180 ms boundary padding, preserves internal pauses, and records the result in `preprocessing.json`. DACVAE encoding then applies an explicit -16 dB loudness target. The default workflow is Speaker Inversion; LoRA remains an explicit advanced choice. Every completed output carries a `studio-model.json` registry record so the user-visible model name survives deletion of disposable job history. Never overwrite source recordings or place absolute machine paths in committed files.
 
 Server-saved voice profiles under `workspace/voices/profiles.json` are the source of truth for the shared Voice Library and require stable `profile_id`, `speaker_uuid` and `style_id`. Projects retain a compatible snapshot plus the profile ID. Reconcile by ID on load; only use a unique exact-name match to migrate legacy projects. Do not regenerate stable IDs during ordinary edits. The legacy `workspace/voicevox/profiles.json` is copied once when the shared store does not yet exist.
 

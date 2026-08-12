@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added conservative Recorder-dataset preprocessing for training: job-local WAV copies, edge-only silence trimming with 180 ms padding, preserved internal pauses, explicit -16 dB loudness normalization, and a per-job preprocessing report.
+- Added the Training workspace with Speaker Inversion as the recommended default, optional LoRA fine-tuning, direct Recorder dataset selection, named models, background progress/cancellation, durable job history, and Studio-owned model directories.
 - Rebuilt Irodori Starter 120 as corpus v2 with 120 unique prompts, explicit Japanese mora and foreign-mora coverage, and 20 distinct fillers or backchannels; versioned prompt IDs prevent stale v1 recordings from being attached to revised text.
 - Added the top-level Recording Studio with switchable Irodori Starter 120, AICA Character Core 200, and AICA Full 500 stages over one shared recording root, browser microphone selection, 48 kHz mono WAV capture, waveform and quality review, and redo/adopt navigation.
 - Replaced browser-only recorder storage and the manual export workflow with named Studio datasets under `workspace/recordings`, including create/select/delete management, automatic training manifests, stable IDs for the upcoming Training workspace, and safe legacy IndexedDB migration.

@@ -15,6 +15,7 @@ import {
   FolderOpen,
   FolderPlus,
   GearSix,
+  GraduationCap,
   HardDrive,
   Lightning,
   ListNumbers,
@@ -76,6 +77,7 @@ import {
   VOICE_COLORS,
 } from "./voice-library.js";
 import { RecorderWorkspace } from "./features/recorder/RecorderWorkspace.jsx";
+import { TrainingWorkspace } from "./features/training/TrainingWorkspace.jsx";
 
 const STORAGE_KEY = "irodori-studio-project-v1";
 const PLAYBACK_VOLUME_KEY = "irodori-studio-playback-volume-v2";
@@ -1237,9 +1239,10 @@ function App() {
           <button className={view === "script" ? "active" : ""} onClick={() => setView("script")} disabled={recorderRecording}><FileText size={18} />台本制作</button>
           <button className={view === "live" ? "active" : ""} onClick={() => setView("live")} disabled={recorderRecording}><Broadcast size={18} />配信コンソール</button>
           <button className={view === "recorder" ? "active" : ""} onClick={() => setView("recorder")}><MicrophoneStage size={18} />録音</button>
+          <button className={view === "training" ? "active" : ""} onClick={() => setView("training")} disabled={recorderRecording}><GraduationCap size={18} />学習</button>
         </nav>
         <div className="top-actions">
-          {view === "recorder" ? <span className="recorder-local-pill"><HardDrive size={18} /><span><small>RECORDING DATASETS</small><strong>{recorderRecording ? "録音中 · 画面を固定" : "Studioに自動保存"}</strong></span></span> : <>
+          {view === "recorder" ? <span className="recorder-local-pill"><HardDrive size={18} /><span><small>RECORDING DATASETS</small><strong>{recorderRecording ? "録音中 · 画面を固定" : "Studioに自動保存"}</strong></span></span> : view === "training" ? <span className="recorder-local-pill"><GraduationCap size={18} /><span><small>TRAINING WORKSPACE</small><strong>モデルをStudioに保存</strong></span></span> : <>
             <button className={`model-pill ${model.loaded ? "loaded" : ""}`} onClick={() => setActiveModal("model")}>
               <span className="model-state" />
               <span><small>{connection === "offline" ? "API OFFLINE" : model.loaded ? "MODEL READY" : "MODEL OFF"}</small><strong>{model.loaded ? model.name : "モデルをロード"}</strong></span>
@@ -1448,12 +1451,18 @@ function App() {
             <div className="system-card"><h3>エンジン</h3><p><Cpu size={18} />{model.cuda?.name || model.model_device || "未接続"}</p><p><HardDrive size={18} />{model.cuda ? `${model.cuda.allocated_gb} GB 使用中` : "GPU情報なし"}</p><p><Queue size={18} />{queueCount}件を処理中</p></div>
           </aside>
         </main>
-      ) : (
+      ) : view === "recorder" ? (
         <RecorderWorkspace
           notify={notify}
           onRecordingStateChange={setRecorderRecording}
           playbackVolume={playbackVolume}
           outputDeviceId={audioOutputPreference.deviceId}
+        />
+      ) : (
+        <TrainingWorkspace
+          bootstrap={bootstrap}
+          notify={notify}
+          onModelUnloaded={() => setModel({ loaded: false })}
         />
       )}
 

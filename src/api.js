@@ -59,6 +59,12 @@ export const api = {
     },
   }).then((response) => response.json()),
   deleteRecordingDataset: (id) => request(`/api/recording-datasets/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
+  trainingJobs: () => request("/api/training-jobs").then((response) => response.json()),
+  trainedModels: () => request("/api/trained-models").then((response) => response.json()),
+  createTrainingJob: (payload) => request("/api/training-jobs", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
+  trainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}`).then((response) => response.json()),
+  cancelTrainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((response) => response.json()),
+  deleteTrainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
   dialog: (kind, multiple = false) => request("/api/dialog", { method: "POST", body: JSON.stringify({ kind, multiple }) }).then((response) => response.json()),
   exportProject: async (payload) => {
     const response = await request("/api/export", { method: "POST", body: JSON.stringify(payload) });

@@ -49,10 +49,12 @@ from studio_backend.models import (
     ProjectSaveRequest,
     RecordingDatasetCreateRequest,
     SynthesisPayload,
+    TrainingJobCreateRequest,
     VoiceProfileRequest,
 )
 from studio_backend.project_store import ProjectStore
 from studio_backend.recording_datasets import RecordingDatasetStore
+from studio_backend.training_jobs import TrainingJobManager
 from studio_backend.voice_profiles import VoiceProfileStore, migrate_voice_profile_store
 from studio_backend.voicevox_api import create_voicevox_app
 
@@ -61,9 +63,20 @@ AUDIO_DIR = WORKSPACE / "audio"
 EXPORT_DIR = WORKSPACE / "exports"
 PROJECT_DIR = WORKSPACE / "projects"
 RECORDING_DIR = WORKSPACE / "recordings"
+MODEL_DIR = WORKSPACE / "models"
+TRAINING_DIR = WORKSPACE / "training"
 VOICEVOX_DIR = WORKSPACE / "voicevox"
 VOICE_DIR = WORKSPACE / "voices"
-for directory in (AUDIO_DIR, EXPORT_DIR, PROJECT_DIR, RECORDING_DIR, VOICEVOX_DIR, VOICE_DIR):
+for directory in (
+    AUDIO_DIR,
+    EXPORT_DIR,
+    PROJECT_DIR,
+    RECORDING_DIR,
+    MODEL_DIR,
+    TRAINING_DIR,
+    VOICEVOX_DIR,
+    VOICE_DIR,
+):
     directory.mkdir(parents=True, exist_ok=True)
 
 migrate_voice_profile_store(VOICEVOX_DIR / "profiles.json", VOICE_DIR / "profiles.json")
@@ -120,12 +133,26 @@ def _asset_scan() -> dict[str, list[str]]:
         for extension in ("*.wav", "*.flac", "*.mp3", "*.m4a", "*.ogg"):
             references.extend(str(path.resolve()) for path in outputs_root.glob(f"**/{extension}"))
         loras = [str(path.parent.resolve()) for path in outputs_root.glob("**/adapter_config.json")]
+    studio_speakers = MODEL_DIR / "speaker-embeddings"
+    studio_loras = MODEL_DIR / "lora"
+    if studio_speakers.exists():
+        speakers.extend(str(path.resolve()) for path in studio_speakers.glob("**/*.speaker.safetensors"))
+    if studio_loras.exists():
+        loras.extend(str(path.parent.resolve()) for path in studio_loras.glob("**/adapter_config.json"))
     return {
         "checkpoints": sorted(set(checkpoints)),
         "speaker_embeddings": sorted(set(speakers)),
         "reference_audio": sorted(set(references))[:500],
         "lora_adapters": sorted(set(loras)),
     }
+
+
+training_job_manager = TrainingJobManager(
+    workspace=WORKSPACE,
+    irodori_root=IRODORI_ROOT,
+    recording_store=recording_dataset_store,
+    default_checkpoint=_default_checkpoint(),
+)
 
 
 @app.get("/api/health")
@@ -151,6 +178,9 @@ def bootstrap() -> dict[str, Any]:
         "model": engine.status(),
         "voice_profiles": voice_profile_store.list(),
         "recording_datasets": recording_dataset_store.list(),
+        "training_jobs": training_job_manager.list(),
+        "trained_models": training_job_manager.models(),
+        "training_paths": training_job_manager.paths(),
         "voicevox_api": dict(voicevox_runtime),
         "irodori_root": str(IRODORI_ROOT),
     }
@@ -347,6 +377,58 @@ def delete_recording_dataset(dataset_id: str) -> dict[str, bool]:
         recording_dataset_store.delete(dataset_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    return {"deleted": True}
+
+
+@app.get("/api/training-jobs")
+def list_training_jobs() -> list[dict[str, Any]]:
+    return training_job_manager.list()
+
+
+@app.get("/api/trained-models")
+def list_trained_models() -> list[dict[str, Any]]:
+    return training_job_manager.models()
+
+
+@app.post("/api/training-jobs", status_code=202)
+def create_training_job(request: TrainingJobCreateRequest) -> dict[str, Any]:
+    try:
+        dataset = recording_dataset_store.load(request.dataset_id)
+        if int(dataset.get("accepted") or 0) <= 0:
+            raise ValueError("採用済みの録音がないため学習を開始できません")
+        if engine.status().get("loaded"):
+            engine.unload_model()
+        return training_job_manager.create(request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/training-jobs/{job_id}")
+def load_training_job(job_id: str) -> dict[str, Any]:
+    try:
+        return training_job_manager.load(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習ジョブが見つかりません") from exc
+
+
+@app.post("/api/training-jobs/{job_id}/cancel")
+def cancel_training_job(job_id: str) -> dict[str, Any]:
+    try:
+        return training_job_manager.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習ジョブが見つかりません") from exc
+
+
+@app.delete("/api/training-jobs/{job_id}")
+def delete_training_job(job_id: str) -> dict[str, bool]:
+    try:
+        training_job_manager.delete(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習ジョブが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"deleted": True}
 
 
