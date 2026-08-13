@@ -205,6 +205,33 @@ print('step=1 loss=0.5', flush=True)
             self.assertEqual(models[0]["name"], "話者A ナレーション")
             self.assertEqual(models[0]["method"], "speaker_inversion")
 
+    def test_trained_model_can_be_renamed_and_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager, _ = self.create_manager(root)
+            output = manager.speaker_directory / "voice-a"
+            output.mkdir()
+            payload = {
+                "id": "model0001",
+                "name": "仮モデル",
+                "method": "speaker_inversion",
+                "created_at": "2026-08-12T00:00:00+00:00",
+                "asset_path": str(output / "checkpoint_final.speaker.safetensors"),
+                "output_path": str(output),
+            }
+            (output / "studio-model.json").write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+
+            renamed = manager.rename_model("model0001", "本番モデル")
+            self.assertEqual(renamed["name"], "本番モデル")
+            self.assertEqual(manager.model("model0001")["name"], "本番モデル")
+
+            manager.delete_model("model0001")
+            self.assertFalse(output.exists())
+            with self.assertRaises(KeyError):
+                manager.model("model0001")
+
     def test_speaker_inversion_job_completes_and_registers_named_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

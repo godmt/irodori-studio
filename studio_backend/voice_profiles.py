@@ -44,6 +44,8 @@ class VoiceProfileStore:
         data.setdefault("schema_version", 1)
         data.setdefault("next_style_id", 1000)
         data.setdefault("profiles", [])
+        for index, profile in enumerate(data["profiles"]):
+            profile.setdefault("display_order", index)
         return data
 
     def _write(self, data: dict[str, Any]) -> None:
@@ -80,7 +82,14 @@ class VoiceProfileStore:
             profiles = [dict(item) for item in self._read()["profiles"]]
         if enabled_only:
             profiles = [profile for profile in profiles if profile.get("enabled")]
-        return sorted(profiles, key=lambda item: (item.get("style_id", 0), item["name"]))
+        return sorted(
+            profiles,
+            key=lambda item: (
+                int(item.get("display_order", 0)),
+                int(item.get("style_id", 0)),
+                item["name"],
+            ),
+        )
 
     def get(self, profile_id: str) -> dict[str, Any]:
         for profile in self.list():
@@ -124,7 +133,14 @@ class VoiceProfileStore:
                 "profile_id": profile_id,
                 "speaker_uuid": speaker_uuid,
                 "style_id": style_id,
-                **request.model_dump(exclude={"profile_id"}),
+                "display_order": (
+                    int(request.display_order)
+                    if request.display_order is not None
+                    else int(existing.get("display_order", existing_index or 0))
+                    if existing
+                    else len(profiles)
+                ),
+                **request.model_dump(exclude={"profile_id", "display_order"}),
                 "created_at": existing.get("created_at", utc_now()) if existing else utc_now(),
                 "updated_at": utc_now(),
             }

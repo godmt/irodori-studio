@@ -19,6 +19,7 @@ export function voiceProfileToVoice(profile, existing = {}, index = 0) {
     loraAdapter: profile.lora_adapter || "",
     defaultCaption: profile.default_caption || "",
     apiProfileId: profile.profile_id || null,
+    apiOrder: Number.isInteger(profile.display_order) ? profile.display_order : index,
     apiEnabled: Boolean(profile.enabled),
     apiSpeakerUuid: profile.speaker_uuid || null,
     apiStyleId: profile.style_id ?? null,
@@ -36,6 +37,7 @@ export function voiceProfileToVoice(profile, existing = {}, index = 0) {
 export function voiceToProfilePayload(voice) {
   return {
     profile_id: voice.apiProfileId || null,
+    display_order: Number.isInteger(voice.apiOrder) ? voice.apiOrder : null,
     name: String(voice.name || "").trim(),
     style_name: String(voice.apiStyleName || "ノーマル").trim(),
     enabled: Boolean(voice.apiEnabled),
@@ -97,5 +99,15 @@ export function mergeVoiceLibrary(project, profiles = []) {
     if (linked.has(profile.profile_id)) continue;
     voices.push(voiceProfileToVoice(profile, {}, voices.length));
   }
-  return { ...project, voices };
+  return {
+    ...project,
+    voices: voices
+      .map((voice, index) => ({ voice, index }))
+      .sort((left, right) => {
+        const leftOrder = Number.isInteger(left.voice.apiOrder) ? left.voice.apiOrder : Number.MAX_SAFE_INTEGER;
+        const rightOrder = Number.isInteger(right.voice.apiOrder) ? right.voice.apiOrder : Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder || left.index - right.index;
+      })
+      .map(({ voice }) => voice),
+  };
 }

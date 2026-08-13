@@ -48,9 +48,12 @@ from studio_backend.models import (
     DialogRequest,
     ModelLoadRequest,
     ProductionExportRequest,
+    ProjectRenameRequest,
     ProjectSaveRequest,
     RecordingDatasetCreateRequest,
+    RecordingDatasetRenameRequest,
     SynthesisPayload,
+    TrainedModelRenameRequest,
     TrainingJobCreateRequest,
     VoiceProfileRequest,
 )
@@ -334,6 +337,18 @@ def save_project(request: ProjectSaveRequest) -> dict[str, Any]:
     return result
 
 
+@app.post("/api/projects/{project_name}/rename")
+def rename_project(project_name: str, request: ProjectRenameRequest) -> dict[str, Any]:
+    try:
+        return project_store.rename(project_name, request.name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません") from exc
+    except FileExistsError as exc:
+        raise HTTPException(
+            status_code=409, detail="同じ名前のプロジェクトがすでにあります"
+        ) from exc
+
+
 @app.delete("/api/projects/{project_name}")
 def delete_project(project_name: str) -> dict[str, Any]:
     try:
@@ -367,6 +382,18 @@ def load_recording_dataset(dataset_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail="録音データセットを開けませんでした") from exc
+
+
+@app.post("/api/recording-datasets/{dataset_id}/rename")
+def rename_recording_dataset(
+    dataset_id: str, request: RecordingDatasetRenameRequest
+) -> dict[str, Any]:
+    try:
+        return recording_dataset_store.rename(dataset_id, request.name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/recording-datasets/{dataset_id}/recordings/{prompt_id}")
@@ -416,6 +443,51 @@ def list_training_jobs() -> list[dict[str, Any]]:
 @app.get("/api/trained-models")
 def list_trained_models() -> list[dict[str, Any]]:
     return training_job_manager.models()
+
+
+@app.post("/api/trained-models/{model_id}/rename")
+def rename_trained_model(
+    model_id: str, request: TrainedModelRenameRequest
+) -> dict[str, Any]:
+    try:
+        return training_job_manager.rename_model(model_id, request.name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習済みモデルが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/api/trained-models/{model_id}")
+def delete_trained_model(model_id: str) -> dict[str, bool]:
+    try:
+        model = training_job_manager.model(model_id)
+        model_roots = [
+            Path(str(raw)).expanduser().resolve()
+            for raw in (model.get("output_path"), model.get("asset_path"))
+            if raw
+        ]
+        for profile in voice_profile_store.list():
+            referenced = [profile.get("ref_embed"), profile.get("lora_adapter")]
+            if any(
+                raw
+                and any(
+                    Path(str(raw)).expanduser().resolve() == root
+                    or root in Path(str(raw)).expanduser().resolve().parents
+                    or Path(str(raw)).expanduser().resolve()
+                    in root.parents
+                    for root in model_roots
+                )
+                for raw in referenced
+            ):
+                raise ValueError(
+                    f"ボイス「{profile['name']}」で使用中です。先にボイス設定を変更してください"
+                )
+        training_job_manager.delete_model(model_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習済みモデルが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": True}
 
 
 @app.post("/api/training-jobs", status_code=202)

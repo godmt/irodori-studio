@@ -50,6 +50,10 @@ export function createRecordingDataset(name) {
   return api.createRecordingDataset(name);
 }
 
+export function renameRecordingDataset(datasetId, name) {
+  return api.renameRecordingDataset(datasetId, name);
+}
+
 export async function loadRecordingDataset(datasetId) {
   const dataset = await api.recordingDataset(datasetId);
   const recordings = Object.fromEntries(Object.entries(dataset.recordings || {}).map(([promptId, recording]) => [

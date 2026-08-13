@@ -57,12 +57,20 @@ class ProjectSaveRequest(BaseModel):
     project: dict[str, Any]
 
 
+class ProjectRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class AudioReleaseRequest(BaseModel):
     audio_files: list[str] = Field(default_factory=list, max_length=256)
     project_name: str | None = Field(default=None, max_length=120)
 
 
 class RecordingDatasetCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class RecordingDatasetRenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
@@ -81,6 +89,10 @@ class TrainingJobCreateRequest(BaseModel):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+
+class TrainedModelRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
 
 
 class ExportSegment(BaseModel):
@@ -110,6 +122,7 @@ class DialogRequest(BaseModel):
 
 class VoiceProfileRequest(BaseModel):
     profile_id: str | None = None
+    display_order: int | None = Field(default=None, ge=0)
     name: str = Field(min_length=1, max_length=80)
     style_name: str = Field(default="ノーマル", min_length=1, max_length=80)
     enabled: bool = False

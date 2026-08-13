@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Unified Script and Voice Library reordering with animated insertion gaps, opaque full-card drag overlays, smooth drop motion, pointer/touch support, and accessible keyboard sorting.
+- Standardized the Voice Library as the rightmost header action in every workspace and added persistent drag-and-drop voice ordering shared by all voice selectors.
+- Moved production export out of the shared header into a Script-only floating action, so Live no longer exposes an unrelated export workflow.
+- Unified resource management and naming UX across Script, Live, Recorder, and Training; added global Voice Library access, project rename, trained-model rename/delete, shared name and confirmation dialogs, and the canonical `DESIGN.md` policy.
+
+- Added Recorder dataset renaming and human-readable name-based workspace folders while preserving stable internal dataset IDs; legacy ID-named folders migrate automatically.
 - Changed Studio setup to infer the PyTorch backend from the selected Irodori-TTS `.venv`, with explicit `-TorchBackend` retained only as an override and saved configuration/hardware used as fallbacks.
 - Fixed Script voice assignment so the selected current voice is applied to new and imported lines, existing lines can change voice from their voice-name control, and the resulting audio is marked for regeneration.
 - Added lifecycle cleanup for generated Script audio and metadata when lines, discarded takes, cancelled generations, or projects are deleted, while retaining files shared by another saved project.

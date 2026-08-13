@@ -93,6 +93,23 @@ class ProjectStore:
             self._write(path, project)
         return {"saved": True, "name": path.stem}
 
+    def rename(self, current_name: str, new_name: str) -> dict[str, Any]:
+        current_path = self._path(current_name)
+        target_path = self._path(new_name)
+        with self._lock:
+            if not current_path.is_file():
+                raise KeyError(current_name)
+            if target_path != current_path and target_path.exists():
+                raise FileExistsError(target_path.stem)
+            project = json.loads(current_path.read_text(encoding="utf-8"))
+            project["title"] = new_name.strip()
+            if target_path == current_path:
+                self._write(current_path, project)
+            else:
+                self._write(target_path, project)
+                current_path.unlink()
+        return {"renamed": True, "name": target_path.stem, "project": project}
+
     def delete(self, name: str) -> dict[str, Any]:
         path = self._path(name)
         with self._lock:

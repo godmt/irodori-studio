@@ -87,13 +87,28 @@ Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. A
 
 `studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`, including collection of every generated WAV referenced by selected and alternate takes. `studio_backend/generated_audio.py` safely removes released WAV basenames and matching JSON metadata. Line and capped-take deletion calls `/api/audio/release`; project save/delete performs the same reference-aware cleanup on the server. Never remove user-supplied reference audio, and retain generated files still referenced by another saved project. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
 
-`studio_backend/recording_datasets.py` owns named datasets under `workspace/recordings/<dataset-id>/`. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The stable dataset ID and local API list are the contract for the Training workspace. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
+`studio_backend/recording_datasets.py` owns named datasets under human-readable `workspace/recordings/<dataset-name>/` directories. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The folder name follows the user-visible name and changes on rename, while the opaque ID inside `dataset.json` remains stable and is resolved by scanning manifests. That stable ID and the local API list are the contract for the Training workspace. Migrate legacy ID-named folders on store initialization, add a numeric suffix only for filesystem collisions, and reject duplicate user-visible names. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
 
 `studio_backend/training_jobs.py` owns job state under `workspace/training/<job-id>/`, invokes the configured external checkout's `prepare_manifest.py` and `train.py`, and writes final assets beneath `workspace/models/speaker-embeddings/` or `workspace/models/lora/`. `studio_backend/audio_preprocessing.py` makes job-local WAV copies, trims only leading/trailing silence at -45 dBFS with 10 ms analysis windows and 180 ms boundary padding, preserves internal pauses, and records the result in `preprocessing.json`. DACVAE encoding then applies an explicit -16 dB loudness target. The default workflow is Speaker Inversion; LoRA remains an explicit advanced choice. Every completed output carries a `studio-model.json` registry record so the user-visible model name survives deletion of disposable job history. Never overwrite source recordings or place absolute machine paths in committed files.
 
 Server-saved voice profiles under `workspace/voices/profiles.json` are the source of truth for the shared Voice Library and require stable `profile_id`, `speaker_uuid` and `style_id`. Projects retain a compatible snapshot plus the profile ID. Reconcile by ID on load; only use a unique exact-name match to migrate legacy projects. Do not regenerate stable IDs during ordinary edits. The legacy `workspace/voicevox/profiles.json` is copied once when the shared store does not yet exist.
 
 Playback volume and output routing are browser-local preferences. Both Script and Live render the same state and apply it to the single shared audio element. Device discovery requests browser audio permission once at startup, stops the temporary input stream immediately, and falls back to the system default without blocking Studio when permission or `setSinkId()` is unavailable.
+
+## Product UX contracts
+
+`DESIGN.md` is the canonical interaction contract for every workspace. Shared resource controls and dialogs live in `src/components/StudioUI.jsx`; do not recreate tab-specific naming or confirmation overlays.
+
+Reorderable lists use `src/components/SortableList.jsx`. Script lines and Voice Library entries must share its insertion-gap animation, opaque drag overlay, handle-only activation, keyboard controls, and reduced-motion behavior instead of implementing tab-specific native drag events.
+
+Named resource APIs currently include:
+
+- `POST /api/projects/{project_name}/rename`
+- `POST /api/recording-datasets/{dataset_id}/rename`
+- `POST /api/trained-models/{model_id}/rename`
+- `DELETE /api/trained-models/{model_id}`
+
+Project and recording-dataset links retain ownership of their content through rename. A trained model keeps its stable model ID, and deletion is blocked while a Voice Library profile points at its asset.
 
 ## Product decisions
 

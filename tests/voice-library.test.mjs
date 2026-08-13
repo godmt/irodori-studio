@@ -11,6 +11,7 @@ import {
 
 const SPEAKER_PROFILE = {
   profile_id: "profile-main",
+  display_order: 0,
   speaker_uuid: "speaker-stable",
   style_id: 1000,
   name: "メインボイス",
@@ -53,7 +54,25 @@ test("ボイスとサーバープロフィールを欠落なく往復できる",
   const voice = voiceProfileToVoice(SPEAKER_PROFILE, { id: "voice-main", color: "#fff" });
   const payload = voiceToProfilePayload(voice);
   assert.equal(payload.profile_id, "profile-main");
+  assert.equal(payload.display_order, 0);
   assert.equal(payload.source_type, "speaker");
   assert.equal(payload.ref_embed, SPEAKER_PROFILE.ref_embed);
   assert.equal(voiceFingerprint(voice), voiceFingerprint({ ...voice, apiProfileId: "changed-id" }));
+});
+
+test("共有ライブラリの保存順をプロジェクトの表示順へ反映する", () => {
+  const project = createDefaultProject();
+  project.voices.push({ ...project.voices[0], id: "voice-second", name: "ナレーター" });
+  project.voices[0].apiProfileId = "profile-main";
+  project.voices[1].apiProfileId = "profile-second";
+  const second = {
+    ...SPEAKER_PROFILE,
+    profile_id: "profile-second",
+    name: "ナレーター",
+    style_id: 1001,
+    display_order: 0,
+  };
+  const main = { ...SPEAKER_PROFILE, display_order: 1 };
+  const merged = mergeVoiceLibrary(project, [second, main]);
+  assert.deepEqual(merged.voices.map((voice) => voice.apiProfileId), ["profile-second", "profile-main"]);
 });

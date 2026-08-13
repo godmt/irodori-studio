@@ -9,7 +9,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from studio_backend.exporter import safe_stem
+
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
+_WINDOWS_RESERVED_NAMES = {
+    "aux",
+    "clock$",
+    "con",
+    "nul",
+    "prn",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
 
 
 def _now() -> str:
@@ -23,14 +34,83 @@ class RecordingDatasetStore:
         self.directory = directory.resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._migrate_human_readable_directories()
 
     def _dataset_directory(self, dataset_id: str) -> Path:
         if not _SAFE_IDENTIFIER.fullmatch(dataset_id):
             raise KeyError(dataset_id)
-        path = (self.directory / dataset_id).resolve()
+        for manifest in self.directory.glob("*/dataset.json"):
+            try:
+                dataset = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if dataset.get("id") == dataset_id:
+                path = manifest.parent.resolve()
+                if path.parent == self.directory:
+                    return path
+        raise KeyError(dataset_id)
+
+    @staticmethod
+    def _folder_stem(name: str) -> str:
+        stem = safe_stem(name, "録音データセット")
+        if stem.casefold() in _WINDOWS_RESERVED_NAMES:
+            stem = f"{stem}-dataset"
+        return stem
+
+    def _available_directory(self, name: str, *, current: Path | None = None) -> Path:
+        base = self._folder_stem(name)
+        occupied = {
+            child.name.casefold()
+            for child in self.directory.iterdir()
+            if child.is_dir() and (current is None or child.resolve() != current.resolve())
+        }
+        candidate = base
+        number = 2
+        while candidate.casefold() in occupied:
+            suffix = f"-{number}"
+            candidate = f"{base[: max(1, 80 - len(suffix))]}{suffix}"
+            number += 1
+        path = (self.directory / candidate).resolve()
         if path.parent != self.directory:
-            raise KeyError(dataset_id)
+            raise ValueError("録音データセットの保存先が不正です")
         return path
+
+    def _migrate_human_readable_directories(self) -> None:
+        with self._lock:
+            manifests = list(self.directory.glob("*/dataset.json"))
+            for manifest in manifests:
+                try:
+                    dataset = json.loads(manifest.read_text(encoding="utf-8"))
+                    name = str(dataset["name"]).strip()
+                except (KeyError, OSError, json.JSONDecodeError, TypeError):
+                    continue
+                current = manifest.parent.resolve()
+                target = self._available_directory(name, current=current)
+                if current.name == target.name:
+                    continue
+                try:
+                    current.rename(target)
+                except OSError:
+                    # The dataset remains usable by ID even when another process locks it.
+                    continue
+
+    def _validate_name(self, name: str, *, exclude_id: str | None = None) -> str:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("データセット名を入力してください")
+        if len(normalized_name) > 120:
+            raise ValueError("データセット名は120文字以内にしてください")
+        normalized_key = normalized_name.casefold()
+        for manifest in self.directory.glob("*/dataset.json"):
+            try:
+                dataset = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if dataset.get("id") == exclude_id:
+                continue
+            if str(dataset.get("name") or "").strip().casefold() == normalized_key:
+                raise ValueError("同じ名前の録音データセットが既にあります")
+        return normalized_name
 
     def dataset_directory(self, dataset_id: str) -> Path:
         directory = self._dataset_directory(dataset_id)
@@ -47,9 +127,8 @@ class RecordingDatasetStore:
             raise KeyError(dataset_id)
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _write(self, dataset: dict[str, Any]) -> None:
-        dataset_id = str(dataset["id"])
-        directory = self._dataset_directory(dataset_id)
+    def _write(self, dataset: dict[str, Any], directory: Path | None = None) -> None:
+        directory = directory or self._dataset_directory(str(dataset["id"]))
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "dataset.json"
         temporary = directory / "dataset.tmp"
@@ -57,10 +136,12 @@ class RecordingDatasetStore:
             json.dumps(dataset, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         temporary.replace(path)
-        self._write_training_manifest(dataset)
+        self._write_training_manifest(dataset, directory)
 
-    def _write_training_manifest(self, dataset: dict[str, Any]) -> None:
-        directory = self._dataset_directory(str(dataset["id"]))
+    def _write_training_manifest(
+        self, dataset: dict[str, Any], directory: Path | None = None
+    ) -> None:
+        directory = directory or self._dataset_directory(str(dataset["id"]))
         rows = []
         for recording in dataset.get("recordings", {}).values():
             if not recording.get("accepted"):
@@ -95,7 +176,9 @@ class RecordingDatasetStore:
         temporary.replace(directory / "dataset.jsonl")
 
     @staticmethod
-    def _summary(dataset: dict[str, Any], updated_at: float) -> dict[str, Any]:
+    def _summary(
+        dataset: dict[str, Any], updated_at: float, directory_name: str
+    ) -> dict[str, Any]:
         recordings = list(dataset.get("recordings", {}).values())
         accepted = [item for item in recordings if item.get("accepted")]
         return {
@@ -108,7 +191,7 @@ class RecordingDatasetStore:
             "accepted_seconds": round(
                 sum(float(item.get("duration") or 0) for item in accepted), 3
             ),
-            "workspace_path": f"workspace/recordings/{dataset['id']}",
+            "workspace_path": f"workspace/recordings/{directory_name}",
             "training_manifest": "dataset.jsonl",
         }
 
@@ -123,41 +206,65 @@ class RecordingDatasetStore:
             for path in paths:
                 try:
                     payload = json.loads(path.read_text(encoding="utf-8"))
-                    datasets.append(self._summary(payload, path.stat().st_mtime))
+                    datasets.append(
+                        self._summary(payload, path.stat().st_mtime, path.parent.name)
+                    )
                 except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError):
                     continue
         return datasets
 
     def create(self, name: str) -> dict[str, Any]:
-        normalized_name = name.strip()
-        if not normalized_name:
-            raise ValueError("データセット名を入力してください")
-        if len(normalized_name) > 120:
-            raise ValueError("データセット名は120文字以内にしてください")
-        dataset_id = uuid4().hex
-        directory = self._dataset_directory(dataset_id)
-        created_at = _now()
-        dataset = {
-            "schema_version": 1,
-            "id": dataset_id,
-            "name": normalized_name,
-            "created_at": created_at,
-            "updated_at": created_at,
-            "recordings": {},
-        }
         with self._lock:
+            normalized_name = self._validate_name(name)
+            dataset_id = uuid4().hex
+            directory = self._available_directory(normalized_name)
+            created_at = _now()
+            dataset = {
+                "schema_version": 2,
+                "id": dataset_id,
+                "name": normalized_name,
+                "created_at": created_at,
+                "updated_at": created_at,
+                "recordings": {},
+            }
             directory.mkdir(parents=True, exist_ok=False)
             (directory / "wavs").mkdir()
-            self._write(dataset)
-        return self._summary(dataset, self._manifest_path(dataset_id).stat().st_mtime)
+            self._write(dataset, directory)
+        return self._summary(
+            dataset, (directory / "dataset.json").stat().st_mtime, directory.name
+        )
 
     def load(self, dataset_id: str) -> dict[str, Any]:
         with self._lock:
             dataset = self._read(dataset_id)
-            summary = self._summary(
-                dataset, self._manifest_path(dataset_id).stat().st_mtime
-            )
+            manifest = self._manifest_path(dataset_id)
+            summary = self._summary(dataset, manifest.stat().st_mtime, manifest.parent.name)
         return {**dataset, **summary}
+
+    def rename(self, dataset_id: str, name: str) -> dict[str, Any]:
+        with self._lock:
+            current = self._dataset_directory(dataset_id)
+            dataset = self._read(dataset_id)
+            normalized_name = self._validate_name(name, exclude_id=dataset_id)
+            target = self._available_directory(normalized_name, current=current)
+            previous_name = str(dataset.get("name") or "")
+            moved = target != current
+            if moved:
+                current.rename(target)
+            dataset["name"] = normalized_name
+            dataset["schema_version"] = max(2, int(dataset.get("schema_version") or 1))
+            dataset["updated_at"] = _now()
+            try:
+                self._write(dataset, target)
+            except Exception:
+                dataset["name"] = previous_name
+                if moved and target.exists() and not current.exists():
+                    target.rename(current)
+                raise
+            manifest = target / "dataset.json"
+            return self._summary(
+                dataset, manifest.stat().st_mtime, target.name
+            )
 
     def save_recording(
         self,

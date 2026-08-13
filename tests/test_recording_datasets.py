@@ -37,6 +37,10 @@ class RecordingDatasetStoreTests(unittest.TestCase):
             store = RecordingDatasetStore(root)
             created = store.create("話者A Core")
             dataset_id = created["id"]
+            dataset_directory = root / "話者A-Core"
+
+            self.assertTrue(dataset_directory.is_dir())
+            self.assertEqual(created["workspace_path"], "workspace/recordings/話者A-Core")
 
             saved = store.save_recording(
                 dataset_id,
@@ -68,7 +72,7 @@ class RecordingDatasetStoreTests(unittest.TestCase):
 
             rows = [
                 json.loads(line)
-                for line in (root / dataset_id / "dataset.jsonl")
+                for line in (dataset_directory / "dataset.jsonl")
                 .read_text(encoding="utf-8")
                 .splitlines()
             ]
@@ -77,7 +81,7 @@ class RecordingDatasetStoreTests(unittest.TestCase):
             self.assertEqual(rows[0]["source_license"], "CC0-1.0")
 
             store.delete(dataset_id)
-            self.assertFalse((root / dataset_id).exists())
+            self.assertFalse(dataset_directory.exists())
             self.assertEqual(store.list(), [])
 
     def test_unaccepted_recording_is_not_added_to_training_manifest(self) -> None:
@@ -85,6 +89,7 @@ class RecordingDatasetStoreTests(unittest.TestCase):
             root = Path(directory)
             store = RecordingDatasetStore(root)
             dataset_id = store.create("確認中")["id"]
+            dataset_directory = root / "確認中"
             store.save_recording(
                 dataset_id,
                 "irodori_0001",
@@ -96,9 +101,73 @@ class RecordingDatasetStoreTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual((root / dataset_id / "dataset.jsonl").read_text(), "")
+            self.assertEqual((dataset_directory / "dataset.jsonl").read_text(), "")
             self.assertEqual(store.list()[0]["recorded"], 1)
             self.assertEqual(store.list()[0]["accepted"], 0)
+
+    def test_dataset_can_be_renamed_without_changing_its_stable_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = RecordingDatasetStore(root)
+            created = store.create("仮の名前")
+            dataset_id = created["id"]
+            store.save_recording(
+                dataset_id,
+                "irodori_0001",
+                empty_wav(),
+                {"duration": 1, "accepted": True, "prompt": {"text": "テスト"}},
+            )
+
+            renamed = store.rename(dataset_id, "神山 メイン収録")
+
+            self.assertEqual(renamed["id"], dataset_id)
+            self.assertEqual(renamed["name"], "神山 メイン収録")
+            self.assertEqual(
+                renamed["workspace_path"], "workspace/recordings/神山-メイン収録"
+            )
+            self.assertFalse((root / "仮の名前").exists())
+            self.assertTrue((root / "神山-メイン収録" / "wavs" / "irodori_0001.wav").is_file())
+            self.assertEqual(store.load(dataset_id)["name"], "神山 メイン収録")
+
+    def test_duplicate_dataset_names_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = RecordingDatasetStore(Path(directory))
+            first = store.create("話者A")
+            second = store.create("話者B")
+
+            with self.assertRaisesRegex(ValueError, "同じ名前"):
+                store.create("話者A")
+            with self.assertRaisesRegex(ValueError, "同じ名前"):
+                store.rename(second["id"], "話者A")
+
+            self.assertEqual(store.load(first["id"])["name"], "話者A")
+            self.assertEqual(store.load(second["id"])["name"], "話者B")
+
+    def test_legacy_id_directory_is_migrated_to_dataset_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset_id = "a" * 32
+            legacy = root / dataset_id
+            legacy.mkdir()
+            (legacy / "wavs").mkdir()
+            (legacy / "dataset.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "id": dataset_id,
+                        "name": "以前の収録",
+                        "recordings": {},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            store = RecordingDatasetStore(root)
+
+            self.assertFalse(legacy.exists())
+            self.assertTrue((root / "以前の収録" / "dataset.json").is_file())
+            self.assertEqual(store.load(dataset_id)["name"], "以前の収録")
 
 
 if __name__ == "__main__":

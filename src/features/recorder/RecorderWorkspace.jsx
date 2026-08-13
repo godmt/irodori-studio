@@ -12,6 +12,7 @@ import {
   ListChecks,
   Microphone,
   Pause,
+  PencilSimple,
   Play,
   Plus,
   ShieldCheck,
@@ -20,9 +21,9 @@ import {
   Trash,
   WarningCircle,
   Waveform as WaveformIcon,
-  X,
 } from "@phosphor-icons/react";
 
+import { ConfirmDialog, IconButton, Modal, NameDialog } from "../../components/StudioUI.jsx";
 import { CORPUS_ROOT, CORPUS_STAGES, getCorpusPrompts, getCorpusStage } from "./corpus-catalog.js";
 import {
   analyseAudio,
@@ -42,6 +43,7 @@ import {
   listRecordingDatasets,
   loadRecordingDataset,
   readLegacyRecordings,
+  renameRecordingDataset,
   writeDatasetRecording,
 } from "./recorder-storage.js";
 import "./recorder.css";
@@ -137,14 +139,6 @@ function Waveform({ samples, active }) {
   return <canvas ref={canvasRef} className="recorder-waveform" aria-label="録音波形" />;
 }
 
-function RecorderOverlay({ children, onClose, top = false }) {
-  return (
-    <div className={`recorder-overlay ${top ? "top" : ""}`} role="presentation" onMouseDown={onClose}>
-      <div onMouseDown={(event) => event.stopPropagation()}>{children}</div>
-    </div>
-  );
-}
-
 export function RecorderWorkspace({
   notify,
   onRecordingStateChange = () => {},
@@ -169,8 +163,10 @@ export function RecorderWorkspace({
   const [isLoaded, setIsLoaded] = useState(false);
   const [datasetBusy, setDatasetBusy] = useState(false);
   const [showCreateDataset, setShowCreateDataset] = useState(false);
+  const [showRenameDataset, setShowRenameDataset] = useState(false);
   const [showDeleteDataset, setShowDeleteDataset] = useState(false);
   const [newDatasetName, setNewDatasetName] = useState("新しい録音データセット");
+  const [renameDatasetName, setRenameDatasetName] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -656,6 +652,25 @@ export function RecorderWorkspace({
     }
   }, [activeDataset?.name, activeDatasetId, corpus, datasetBusy, isRecording, notify]);
 
+  const renameActiveDataset = useCallback(async () => {
+    const name = renameDatasetName.trim();
+    if (!activeDatasetId || !name || datasetBusy || isRecording) return;
+    setDatasetBusy(true);
+    setError("");
+    try {
+      const renamed = await renameRecordingDataset(activeDatasetId, name);
+      const available = await listRecordingDatasets();
+      setDatasets(available);
+      setShowRenameDataset(false);
+      setNewDatasetName(nextDatasetName(available));
+      notify(`録音データセット名を「${renamed.name}」へ変更しました。`, "success");
+    } catch (reason) {
+      setError(reason.message || "録音データセット名を変更できませんでした。");
+    } finally {
+      setDatasetBusy(false);
+    }
+  }, [activeDatasetId, datasetBusy, isRecording, notify, renameDatasetName]);
+
   const filteredPrompts = corpus
     .map((item, index) => ({ item, index, recording: recordings[item.id] }))
     .filter(({ recording }) => {
@@ -718,7 +733,7 @@ export function RecorderWorkspace({
               </select>
             </label>
             <span className="recorder-format"><WaveformIcon size={17} />48 kHz · Mono · PCM 16-bit</span>
-            <button className="icon-button quiet" onClick={() => setShowSettings(true)} aria-label="録音設定" title="録音設定"><GearSix size={19} /></button>
+            <IconButton label="録音設定" onClick={() => setShowSettings(true)}><GearSix size={19} /></IconButton>
           </div>
         </header>
         <div className="recorder-progress-rail" aria-label={`録音進捗 ${acceptedCount}/${corpus.length}`}><span style={{ width: `${progressPercent}%` }} /></div>
@@ -733,8 +748,9 @@ export function RecorderWorkspace({
                   {datasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.accepted}件採用</option>)}
                 </select></span>
               </label>
-              <button className="secondary-button recorder-new-dataset" onClick={() => { setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }} disabled={isRecording || datasetBusy}><Plus size={18} />新規作成</button>
-              <button className="icon-button quiet" onClick={() => setShowDeleteDataset(true)} disabled={!activeDatasetId || isRecording || datasetBusy} aria-label="現在の録音データセットを削除" title="現在の録音データセットを削除"><Trash size={19} /></button>
+              <IconButton label="録音データセットを作成" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }} disabled={isRecording || datasetBusy}><Plus size={19} /></IconButton>
+              <IconButton label="録音データセット名を変更" onClick={() => { setError(""); setRenameDatasetName(activeDataset?.name || ""); setShowRenameDataset(true); }} disabled={!activeDatasetId || isRecording || datasetBusy}><PencilSimple size={19} /></IconButton>
+              <IconButton label="録音データセットを削除" tone="danger" onClick={() => setShowDeleteDataset(true)} disabled={!activeDatasetId || isRecording || datasetBusy}><Trash size={19} /></IconButton>
             </div>
             <div className="recorder-studio-meta">
               <label className="recorder-corpus-switcher">
@@ -750,7 +766,7 @@ export function RecorderWorkspace({
               </div>
             </div>
 
-            {!activeDatasetId && <div className="recorder-dataset-required"><Database size={22} /><span><strong>録音データセットを作成してください。</strong> 音声はStudioへ自動保存され、トレーニングからそのまま選択できます。</span><button className="primary-button" onClick={() => setShowCreateDataset(true)}><Plus size={18} />作成</button></div>}
+            {!activeDatasetId && <div className="recorder-dataset-required"><Database size={22} /><span><strong>録音データセットを作成してください。</strong> 音声はStudioへ自動保存され、トレーニングからそのまま選択できます。</span><button className="primary-button" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }}>作成</button></div>}
             {acceptedCount === corpus.length && <div className="recorder-complete"><CheckCircle size={21} /><span><strong>すべて録音できました。</strong> このデータセットはトレーニングから選択できます。</span></div>}
 
             <article className={`recorder-reading-card emotion-${prompt.emotion}`}>
@@ -789,27 +805,51 @@ export function RecorderWorkspace({
 
       {progressPanel}
 
-      {showSettings && <RecorderOverlay onClose={() => setShowSettings(false)}><section className="recorder-settings-modal">
-        <button className="recorder-overlay-close" onClick={() => setShowSettings(false)} aria-label="閉じる"><X size={20} /></button>
-        <span className="recorder-modal-icon"><Microphone size={25} /></span><h2>録音設定</h2>
-        <p>録音は48 kHz・モノラル・PCM 16-bit WAVへ変換し、選択中のデータセットへ自動保存します。</p>
+      {showSettings && <Modal title="録音設定" eyebrow="RECORDING" onClose={() => setShowSettings(false)}><section className="recorder-settings-content">
+        <p className="resource-dialog-description">録音は48 kHz・モノラル・PCM 16-bit WAVへ変換し、選択中のデータセットへ自動保存します。</p>
         <label><span>使用するマイク</span><select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} disabled={isRecording}><option value="">{hasDeviceLabels ? "既定のマイク" : "マイクの許可が必要"}</option>{devices.filter((device) => device.label?.trim()).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}</select></label>
         {microphonePermission === "denied" && <button className="secondary-button" onClick={requestMicrophoneAccess}><Microphone size={18} />マイクを許可</button>}
         <div className="recorder-privacy"><ShieldCheck size={20} /><span><strong>このPCだけで処理</strong>録音は外部へ送信せず、Studioの録音データセットへ保存します。</span></div>
-      </section></RecorderOverlay>}
+      </section></Modal>}
 
-      {showCreateDataset && <RecorderOverlay onClose={() => !datasetBusy && setShowCreateDataset(false)}><section className="recorder-settings-modal">
-        <button className="recorder-overlay-close" onClick={() => setShowCreateDataset(false)} disabled={datasetBusy} aria-label="閉じる"><X size={20} /></button>
-        <span className="recorder-modal-icon"><Database size={25} /></span><h2>録音データセットを作成</h2>
-        <p>話者や収録セッションが分かる名前を付けてください。録音はこのデータセットへ自動保存されます。</p>
-        <label><span>データセット名</span><input autoFocus value={newDatasetName} onChange={(event) => setNewDatasetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createDataset(); }} maxLength={120} /></label>
-        <button className="primary-button recorder-create-dataset" onClick={createDataset} disabled={datasetBusy || !newDatasetName.trim()}>{datasetBusy ? <SpinnerGap className="spin" size={19} /> : <Plus size={19} />}作成</button>
-      </section></RecorderOverlay>}
+      {showCreateDataset && <NameDialog
+        title="録音データセットを作成"
+        eyebrow="RECORDING DATASET"
+        description="話者や収録セッションが分かる名前を付けてください。録音はこのデータセットへ自動保存されます。"
+        label="データセット名"
+        value={newDatasetName}
+        onChange={setNewDatasetName}
+        onSubmit={createDataset}
+        onClose={() => setShowCreateDataset(false)}
+        submitLabel="作成"
+        busy={datasetBusy}
+        error={error}
+        disabled={!newDatasetName.trim() || datasets.some((dataset) => dataset.name.toLocaleLowerCase("ja-JP") === newDatasetName.trim().toLocaleLowerCase("ja-JP"))}
+      />}
 
-      {showDeleteDataset && <RecorderOverlay top><section className="recorder-confirm-modal">
-        <span className="recorder-modal-icon danger"><Trash size={25} /></span><h2>「{activeDataset?.name}」を削除しますか？</h2><p>このデータセットに保存された採用済みを含むすべての録音を削除します。この操作は元に戻せません。</p>
-        <div><button className="secondary-button" onClick={() => setShowDeleteDataset(false)} disabled={datasetBusy}>キャンセル</button><button className="danger-button" onClick={deleteActiveDataset} disabled={datasetBusy}>{datasetBusy ? <SpinnerGap className="spin" size={18} /> : <Trash size={18} />}削除</button></div>
-      </section></RecorderOverlay>}
+      {showRenameDataset && <NameDialog
+        title="録音データセット名を変更"
+        eyebrow="RECORDING DATASET"
+        description="Studioの表示名とworkspace内の保存フォルダ名を一緒に変更します。録音や学習との紐付けは維持されます。"
+        label="データセット名"
+        value={renameDatasetName}
+        onChange={setRenameDatasetName}
+        onSubmit={renameActiveDataset}
+        onClose={() => setShowRenameDataset(false)}
+        submitLabel="名前を変更"
+        busy={datasetBusy}
+        error={error}
+        disabled={!renameDatasetName.trim() || renameDatasetName.trim() === activeDataset?.name || datasets.some((dataset) => dataset.id !== activeDatasetId && dataset.name.toLocaleLowerCase("ja-JP") === renameDatasetName.trim().toLocaleLowerCase("ja-JP"))}
+      />}
+
+      {showDeleteDataset && <ConfirmDialog
+        title={`「${activeDataset?.name}」を削除しますか？`}
+        eyebrow="DELETE DATASET"
+        description="このデータセットに保存された、採用済みを含むすべての録音を削除します。この操作は元に戻せません。"
+        onConfirm={deleteActiveDataset}
+        onClose={() => setShowDeleteDataset(false)}
+        busy={datasetBusy}
+      />}
     </main>
   );
 }

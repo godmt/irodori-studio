@@ -41,6 +41,30 @@ class ProjectStoreTests(unittest.TestCase):
                 store.create("番組A", {"title": "番組A", "version": 2})
             self.assertEqual(store.load("番組A")["version"], 1)
 
+    def test_project_can_be_renamed_without_changing_its_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            store.create("仮タイトル", {"title": "仮タイトル", "lines": [{"text": "本文"}]})
+
+            renamed = store.rename("仮タイトル", "本番タイトル")
+
+            self.assertEqual(renamed["name"], "本番タイトル")
+            self.assertEqual(renamed["project"]["title"], "本番タイトル")
+            self.assertEqual(store.load("本番タイトル")["lines"][0]["text"], "本文")
+            with self.assertRaises(KeyError):
+                store.load("仮タイトル")
+
+    def test_project_rename_never_overwrites_an_existing_project(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            store.create("番組A", {"title": "番組A"})
+            store.create("番組B", {"title": "番組B"})
+
+            with self.assertRaises(FileExistsError):
+                store.rename("番組A", "番組B")
+
+            self.assertEqual(store.load("番組A")["title"], "番組A")
+
     def test_audio_references_include_takes_and_can_exclude_a_project(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))

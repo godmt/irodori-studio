@@ -24,6 +24,7 @@ export const DEFAULT_PARAMS = {
 
 export const DEFAULT_VOICE_API = {
   apiProfileId: null,
+  apiOrder: null,
   apiEnabled: false,
   apiSpeakerUuid: null,
   apiStyleId: null,

@@ -21,7 +21,6 @@
 .recorder-dataset-select small { padding-left: 3px; color: var(--muted); font-size: var(--type-support); font-weight: 850; line-height: 1.2; }
 .recorder-dataset-select select { width: 100%; min-width: 0; height: 27px; padding: 0 29px 0 3px; overflow: hidden; color: var(--ink); background-color: transparent; border: 0; font-size: var(--type-body); font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
 .recorder-dataset-select select:focus { box-shadow: none; }
-.recorder-new-dataset { min-height: 44px; white-space: nowrap; }
 .recorder-studio-meta { display: flex; align-items: center; gap: 12px; min-height: 48px; }
 .recorder-corpus-switcher { display: flex; align-items: center; gap: 9px; min-width: 290px; min-height: 48px; padding: 5px 8px 5px 11px; color: var(--accent-dark); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
 .recorder-corpus-switcher > svg { flex: 0 0 auto; }
@@ -122,27 +121,14 @@
 .recorder-autosave-status strong, .recorder-autosave-status small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recorder-autosave-status strong { color: var(--ink); font-size: var(--type-label); }
 .recorder-autosave-status small { margin-top: 2px; font-size: var(--type-support); line-height: 1.45; }
-.recorder-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 18px; background: rgba(47, 38, 31, 0.44); backdrop-filter: blur(5px); }
-.recorder-overlay.top { z-index: 100; }
-.recorder-overlay-close { position: absolute; top: 14px; right: 14px; z-index: 2; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 50%; }
-.recorder-settings-modal, .recorder-confirm-modal { position: relative; width: min(470px, calc(100vw - 28px)); padding: 27px; background: var(--paper); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 30px 80px rgba(43, 31, 24, 0.28); }
-.recorder-settings-modal h2, .recorder-confirm-modal h2 { margin: 12px 0 7px; font-family: "Yu Mincho", "Hiragino Mincho ProN", serif; font-size: var(--type-section-title); line-height: 1.5; }
-.recorder-settings-modal > p, .recorder-confirm-modal > p { margin: 0 0 17px; color: var(--muted); font-size: var(--type-body); line-height: 1.7; }
-.recorder-modal-icon { display: grid; place-items: center; width: 43px; height: 43px; color: #fff; background: var(--accent); border-radius: 12px; }
-.recorder-modal-icon.danger { background: var(--danger); }
-.recorder-settings-modal label { display: grid; gap: 6px; color: var(--muted); font-size: var(--type-label); font-weight: 800; }
-.recorder-settings-modal select, .recorder-settings-modal input { width: 100%; height: 43px; padding: 0 10px; }
-.recorder-settings-modal > .secondary-button { width: 100%; margin-top: 9px; }
-.recorder-create-dataset { width: 100%; margin-top: 16px; }
+.recorder-settings-content { display: grid; gap: 16px; }
+.recorder-settings-content > label { display: grid; gap: 7px; color: var(--muted); font-size: var(--type-label); font-weight: 800; }
+.recorder-settings-content select { width: 100%; height: 44px; padding: 0 10px; }
+.recorder-settings-content > .secondary-button { width: 100%; }
 .recorder-privacy { display: flex; align-items: flex-start; gap: 9px; margin-top: 15px; padding: 11px; color: var(--success); background: var(--success-soft); border-radius: 10px; }
 .recorder-privacy svg { flex: 0 0 auto; }
 .recorder-privacy span { font-size: var(--type-label); line-height: 1.6; }
 .recorder-privacy strong { display: block; font-size: var(--type-body); }
-.recorder-danger-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 17px; padding: 7px 0; color: var(--danger); background: transparent; border: 0; font-size: var(--type-label); font-weight: 800; }
-.recorder-confirm-modal { text-align: center; }
-.recorder-confirm-modal .recorder-modal-icon { margin: 0 auto; }
-.recorder-confirm-modal > div { display: flex; justify-content: center; gap: 8px; }
-.recorder-confirm-modal .danger-button { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 14px; color: #fff; background: var(--danger); border: 1px solid var(--danger); border-radius: 10px; font-size: var(--type-label); font-weight: 800; }
 .recorder-loading { display: grid; min-height: 0; place-content: center; gap: 10px; color: var(--accent-dark); text-align: center; background: var(--canvas); }
 
 @media (max-width: 1180px) {
@@ -167,7 +153,6 @@
   .recorder-device-select { flex: 1; width: auto; }
   .recorder-dataset-bar { flex-wrap: wrap; }
   .recorder-dataset-select { flex-basis: 100%; }
-  .recorder-new-dataset { flex: 1; }
   .recorder-studio-meta { flex-wrap: wrap; }
   .recorder-corpus-switcher { width: 100%; min-width: 0; flex-basis: 100%; }
   .recorder-reading-card { min-height: 210px; padding: 17px; }
@@ -182,5 +167,4 @@
   .recorder-dataset-required { align-items: flex-start; flex-wrap: wrap; }
   .recorder-dataset-required .primary-button { width: 100%; }
   .recorder-shortcut { display: none; }
-  .recorder-settings-modal, .recorder-confirm-modal { padding: 23px 18px; }
 }

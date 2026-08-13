@@ -93,6 +93,64 @@ class TrainingJobManager:
                     continue
         return sorted(models, key=lambda model: model.get("created_at", ""), reverse=True)
 
+    def _model_manifest(self, model_id: str) -> tuple[Path, dict[str, Any]]:
+        if not _SAFE_IDENTIFIER.fullmatch(model_id):
+            raise KeyError(model_id)
+        for root in (self.speaker_directory, self.lora_directory):
+            for path in root.glob("*/studio-model.json"):
+                try:
+                    model = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    continue
+                if str(model.get("id")) == model_id:
+                    return path, model
+        raise KeyError(model_id)
+
+    def model(self, model_id: str) -> dict[str, Any]:
+        with self._lock:
+            _, model = self._model_manifest(model_id)
+            return dict(model)
+
+    def rename_model(self, model_id: str, name: str) -> dict[str, Any]:
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("モデル名を入力してください")
+        with self._lock:
+            if any(
+                str(model.get("id")) != model_id
+                and str(model.get("name", "")).casefold() == normalized.casefold()
+                for model in self.models()
+            ):
+                raise ValueError("同じ名前の学習済みモデルがすでにあります")
+            manifest, model = self._model_manifest(model_id)
+            model["name"] = normalized
+            model["updated_at"] = _now()
+            temporary = manifest.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            temporary.replace(manifest)
+            try:
+                job = self._read(model_id)
+                job["name"] = normalized
+                job["updated_at"] = _now()
+                self._write(job)
+            except KeyError:
+                pass
+            return dict(model)
+
+    def delete_model(self, model_id: str) -> None:
+        with self._lock:
+            manifest, _ = self._model_manifest(model_id)
+            directory = manifest.parent.resolve()
+            allowed_roots = {
+                self.speaker_directory.resolve(),
+                self.lora_directory.resolve(),
+            }
+            if directory.parent not in allowed_roots:
+                raise ValueError("学習済みモデルの保存先が不正です")
+            shutil.rmtree(directory)
+
     def _job_directory(self, job_id: str) -> Path:
         if not _SAFE_IDENTIFIER.fullmatch(job_id):
             raise KeyError(job_id)

@@ -88,7 +88,7 @@
 .training-active-card > p { margin: 10px 0 0; color: var(--muted); font-size: var(--type-label); line-height: 1.5; }
 .training-active-card > button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 38px; margin-top: 10px; color: var(--danger); background: var(--danger-soft); border: 1px solid #ddb8b0; border-radius: 9px; font-size: var(--type-label); font-weight: 800; }
 .training-history { min-height: 0; flex: 1; padding: 0 8px 8px; overflow: auto; }
-.training-history-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) 31px; align-items: center; gap: 8px; padding: 10px 7px; border-bottom: 1px solid #e8ddcf; }
+.training-history-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 10px 7px; border-bottom: 1px solid #e8ddcf; }
 .training-history-icon { display: grid; place-items: center; width: 34px; height: 34px; color: var(--muted); background: var(--paper); border: 1px solid var(--line); border-radius: 50%; }
 .training-history-item.completed .training-history-icon { color: var(--success); background: var(--success-soft); border-color: #bfd4ce; }
 .training-history-item.failed .training-history-icon { color: var(--danger); background: var(--danger-soft); }
@@ -97,9 +97,9 @@
 .training-history-item strong { font-size: var(--type-label); }
 .training-history-item span { margin-top: 2px; color: var(--muted); font-size: var(--type-label); }
 .training-history-item small { margin-top: 2px; color: var(--soft-muted); font-size: var(--type-support); }
-.training-history-item > button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 50%; }
-.training-history-item > button:hover { color: var(--danger); background: var(--danger-soft); }
-.training-model-ready { display: grid; place-items: center; width: 30px; height: 30px; color: var(--success); background: var(--success-soft); border-radius: 50%; }
+.training-history-item > .icon-button { width: 30px; height: 30px; }
+.training-resource-actions { display: flex; align-items: center; gap: 4px; margin-top: 0 !important; overflow: visible !important; }
+.training-resource-actions .icon-button { width: 30px; height: 30px; }
 .training-empty-history { display: grid; place-items: center; gap: 5px; padding: 45px 20px; color: var(--soft-muted); text-align: center; }
 .training-empty-history strong { color: var(--ink); font-size: var(--type-label); }
 .training-empty-history span { font-size: var(--type-label); line-height: 1.55; }

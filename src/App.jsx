@@ -22,6 +22,7 @@ import {
   MagicWand,
   MicrophoneStage,
   Pause,
+  PencilSimple,
   Play,
   PlugsConnected,
   Plus,
@@ -33,6 +34,7 @@ import {
   Stop,
   Trash,
   UploadSimple,
+  UserSound,
   VideoCamera,
   WarningCircle,
   Waveform,
@@ -81,6 +83,14 @@ import {
 } from "./voice-library.js";
 import { RecorderWorkspace } from "./features/recorder/RecorderWorkspace.jsx";
 import { TrainingWorkspace } from "./features/training/TrainingWorkspace.jsx";
+import {
+  ConfirmDialog,
+  IconButton,
+  Modal,
+  NameDialog,
+  VoiceSelect,
+} from "./components/StudioUI.jsx";
+import { SortableList } from "./components/SortableList.jsx";
 
 const STORAGE_KEY = "irodori-studio-project-v1";
 const PLAYBACK_VOLUME_KEY = "irodori-studio-playback-volume-v2";
@@ -115,31 +125,6 @@ function loadLocalProject() {
   } catch {
     return createDefaultProject();
   }
-}
-
-function IconButton({ label, children, tone = "quiet", className = "", ...props }) {
-  return (
-    <button className={`icon-button ${tone} ${className}`} type="button" title={label} aria-label={label} {...props}>
-      {children}
-    </button>
-  );
-}
-
-function Modal({ title, eyebrow, onClose, children, wide = false, scrollable = false }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className={`modal-card ${wide ? "wide" : ""} ${scrollable ? "scrollable" : ""}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
-        <header className="modal-header">
-          <div>
-            {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-            <h2>{title}</h2>
-          </div>
-          <IconButton label="閉じる" onClick={onClose}><X size={21} /></IconButton>
-        </header>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
-  );
 }
 
 function EmojiPicker({ picker, expanded, onExpandedChange, onSelect, onClose }) {
@@ -293,8 +278,10 @@ function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [activeProjectName, setActiveProjectName] = useState(project.title);
+  const [projectRenameTarget, setProjectRenameTarget] = useState(null);
+  const [projectRenameName, setProjectRenameName] = useState("");
+  const [projectDeleteTarget, setProjectDeleteTarget] = useState(null);
   const [exportBusy, setExportBusy] = useState(false);
-  const [draggedLineId, setDraggedLineId] = useState(null);
   const [liveInput, setLiveInput] = useState("");
   const [liveCaption, setLiveCaption] = useState("");
   const [liveItems, setLiveItems] = useState([]);
@@ -309,6 +296,10 @@ function App() {
   const [serverVoiceProfiles, setServerVoiceProfiles] = useState([]);
   const [voiceLibraryReady, setVoiceLibraryReady] = useState(false);
   const [voiceSaveState, setVoiceSaveState] = useState({ status: "loading", message: "ライブラリを読み込み中" });
+  const [voiceNameAction, setVoiceNameAction] = useState(null);
+  const [voiceNameValue, setVoiceNameValue] = useState("");
+  const [voiceDeletePending, setVoiceDeletePending] = useState(false);
+  const [voiceDeleteBusy, setVoiceDeleteBusy] = useState(false);
   const [emojiPicker, setEmojiPicker] = useState(null);
   const [emojiExpanded, setEmojiExpanded] = useState(false);
 
@@ -577,6 +568,7 @@ function App() {
             voices: current.voices.map((item) => item.id === voice.id ? {
               ...item,
               apiProfileId: profile.profile_id,
+              apiOrder: profile.display_order,
               apiSpeakerUuid: profile.speaker_uuid,
               apiStyleId: profile.style_id,
               apiEnabled: profile.enabled,
@@ -588,7 +580,7 @@ function App() {
         setServerVoiceProfiles((current) => [
           ...current.filter((item) => item.profile_id !== profile.profile_id),
           profile,
-        ].sort((a, b) => a.style_id - b.style_id));
+        ].sort((a, b) => (a.display_order ?? a.style_id) - (b.display_order ?? b.style_id)));
       }
 
       if (validationErrors.length) {
@@ -619,9 +611,24 @@ function App() {
     return () => window.clearTimeout(voiceSaveTimerRef.current);
   }, [connection, persistVoiceLibrary, project.voices, voiceLibraryReady]);
 
+  const commitVoiceOrder = useCallback((voices) => {
+    const ordered = voices.map((voice, index) => ({ ...voice, apiOrder: index }));
+    const next = {
+      ...projectRef.current,
+      voices: ordered,
+      updatedAt: new Date().toISOString(),
+    };
+    projectRef.current = next;
+    setProject(next);
+    window.clearTimeout(voiceSaveTimerRef.current);
+    setVoiceSaveState({ status: "pending", message: "並び順を保存します…" });
+    window.setTimeout(() => persistVoiceLibrary(), 0);
+  }, [persistVoiceLibrary]);
+
+
   const deleteSelectedVoice = useCallback(async () => {
-    if (!selectedVoice || projectRef.current.voices.length <= 1) return;
-    if (!window.confirm(`「${selectedVoice.name}」をボイスライブラリから削除しますか？`)) return;
+    if (!selectedVoice || projectRef.current.voices.length <= 1 || voiceDeleteBusy) return;
+    setVoiceDeleteBusy(true);
     try {
       if (selectedVoice.apiProfileId) await api.deleteVoiceProfile(selectedVoice.apiProfileId);
       const replacementId = projectRef.current.voices.find((voice) => voice.id !== selectedVoice.id)?.id;
@@ -637,11 +644,40 @@ function App() {
         } : line),
       }));
       setSelectedVoiceId(replacementId);
+      setVoiceDeletePending(false);
       notify("ボイスをライブラリから削除しました", "success");
     } catch (error) {
       notify(error.message, "error");
+    } finally {
+      setVoiceDeleteBusy(false);
     }
-  }, [mutateProject, notify, selectedVoice]);
+  }, [mutateProject, notify, selectedVoice, voiceDeleteBusy]);
+
+  const submitVoiceName = useCallback(() => {
+    const name = voiceNameValue.trim();
+    if (!name || !voiceNameAction) return;
+    if (voiceNameAction === "create") {
+      const voice = {
+        ...DEFAULT_VOICE_API,
+        id: uid("voice"),
+        name,
+        color: VOICE_COLORS[projectRef.current.voices.length % VOICE_COLORS.length],
+        sourceType: "none",
+        apiOrder: projectRef.current.voices.length,
+        refEmbed: "",
+        refWavs: [],
+        loraAdapter: "",
+        defaultCaption: "",
+      };
+      mutateProject((current) => ({ ...current, voices: [...current.voices, voice] }));
+      setSelectedVoiceId(voice.id);
+      notify(`「${name}」をボイスライブラリへ追加しました`, "success");
+    } else {
+      updateSelectedVoice({ name });
+      notify(`ボイス名を「${name}」へ変更しました`, "success");
+    }
+    setVoiceNameAction(null);
+  }, [mutateProject, notify, updateSelectedVoice, voiceNameAction, voiceNameValue]);
 
   const mutateLine = useCallback((lineId, patch, invalidate = true) => {
     mutateProject((current) => ({
@@ -980,19 +1016,6 @@ function App() {
     releaseAudioFiles(releasedAudio);
   }, [mutateProject, releaseAudioFiles, selectedLineId]);
 
-  const handleDrop = useCallback((targetId) => {
-    if (!draggedLineId || draggedLineId === targetId) return;
-    mutateProject((current) => {
-      const from = current.lines.findIndex((line) => line.id === draggedLineId);
-      const to = current.lines.findIndex((line) => line.id === targetId);
-      const lines = [...current.lines];
-      const [moved] = lines.splice(from, 1);
-      lines.splice(to, 0, moved);
-      return { ...current, lines };
-    });
-    setDraggedLineId(null);
-  }, [draggedLineId, mutateProject]);
-
   const handleLoadModel = useCallback(async () => {
     setModelLoading(true);
     try {
@@ -1038,15 +1061,16 @@ function App() {
 
   const persistCurrentProject = useCallback(async () => {
     const current = projectRef.current;
-    const name = String(current.title || "").trim();
-    if (!name) throw new Error("プロジェクト名を入力してください");
-    const normalized = { ...current, title: name, updatedAt: new Date().toISOString() };
-    const result = await api.saveProject(name, normalized);
+    const title = String(current.title || "").trim();
+    if (!title) throw new Error("プロジェクト名を入力してください");
+    const storageName = activeProjectName || title;
+    const normalized = { ...current, title, updatedAt: new Date().toISOString() };
+    const result = await api.saveProject(storageName, normalized);
     projectRef.current = normalized;
     setProject(normalized);
     setActiveProjectName(result.name);
     return result;
-  }, []);
+  }, [activeProjectName]);
 
   const saveProject = useCallback(async () => {
     try {
@@ -1125,7 +1149,6 @@ function App() {
   }, [activateProject, activeProjectName, notify, persistCurrentProject]);
 
   const deleteSavedProject = useCallback(async (saved) => {
-    if (!window.confirm(`「${saved.name}」を削除しますか？\nこの操作は元に戻せません。`)) return;
     setProjectBusy(true);
     try {
       const activeAudioFiles = saved.storage_name === activeProjectName
@@ -1139,6 +1162,7 @@ function App() {
         activateProject(fresh, null);
       }
       setNewProjectName(nextAvailableProjectName(remaining, projectRef.current.title));
+      setProjectDeleteTarget(null);
       notify(`「${saved.name}」を削除しました`, "success");
     } catch (error) {
       notify(error.message, "error");
@@ -1146,6 +1170,48 @@ function App() {
       setProjectBusy(false);
     }
   }, [activateProject, activeProjectName, notify, refreshProjects, releaseAudioFiles]);
+
+  const openProjectRename = useCallback((saved = null) => {
+    const target = saved || {
+      name: projectRef.current.title,
+      storage_name: activeProjectName,
+    };
+    setProjectRenameTarget(target);
+    setProjectRenameName(target.name || "");
+  }, [activeProjectName]);
+
+  const renameProject = useCallback(async () => {
+    const name = projectRenameName.trim();
+    if (!projectRenameTarget || !name || projectBusy) return;
+    setProjectBusy(true);
+    try {
+      const isCurrent = projectRenameTarget.storage_name === activeProjectName
+        || (!projectRenameTarget.storage_name && !activeProjectName);
+      if (isCurrent && activeProjectName) await persistCurrentProject();
+      if (projectRenameTarget.storage_name) {
+        const result = await api.renameProject(projectRenameTarget.storage_name, name);
+        if (isCurrent) {
+          const next = { ...projectRef.current, title: name };
+          projectRef.current = next;
+          setProject(next);
+          setActiveProjectName(result.name);
+        }
+      } else {
+        const next = { ...projectRef.current, title: name, updatedAt: new Date().toISOString() };
+        const result = await api.saveProject(name, next);
+        projectRef.current = next;
+        setProject(next);
+        setActiveProjectName(result.name);
+      }
+      await refreshProjects();
+      setProjectRenameTarget(null);
+      notify(`プロジェクト名を「${name}」へ変更しました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setProjectBusy(false);
+    }
+  }, [activeProjectName, notify, persistCurrentProject, projectBusy, projectRenameName, projectRenameTarget, refreshProjects]);
 
   const exportProduction = useCallback(async () => {
     if (staleOrMissing.length) {
@@ -1287,6 +1353,148 @@ function App() {
 
   const speakingLine = project.lines.find((line) => line.id === speakingLineId) || liveItems.find((line) => line.id === speakingLineId);
 
+  const renderScriptLine = (line, index, sortable = {}) => {
+    const voice = project.voices.find((item) => item.id === line.voiceId) || project.voices[0];
+    const selected = selectedLineId === line.id;
+    const speaking = speakingLineId === line.id;
+    const overlay = Boolean(sortable.overlay);
+    return (
+      <article
+        {...(sortable.containerProps || {})}
+        className={`script-line ${selected ? "selected" : ""} ${speaking ? "speaking" : ""} ${sortable.isDragging ? "sortable-source-hidden" : ""} ${sortable.isSorting ? "sorting" : ""} ${overlay ? "sortable-overlay-item" : ""}`}
+        aria-hidden={overlay || undefined}
+        onClick={overlay ? undefined : () => { setSelectedLineId(line.id); setSelectedVoiceId(voice.id); }}
+      >
+        <button
+          {...(sortable.handleProps || {})}
+          className="drag-handle"
+          type="button"
+          aria-label={`${index + 1}行目を並び替え`}
+          title="ドラッグして並び替え"
+          tabIndex={overlay ? -1 : undefined}
+        ><DotsSixVertical size={20} /></button>
+        <span className="line-number">{speaking ? <SpeakerHigh size={21} weight="fill" /> : index + 1}</span>
+        <div className="line-content">
+          <div className="text-editor-shell">
+            <textarea
+              ref={overlay ? undefined : (node) => {
+                if (node) lineTextRefs.current.set(line.id, node);
+                else lineTextRefs.current.delete(line.id);
+              }}
+              value={line.text}
+              rows={Math.max(1, Math.min(3, Math.ceil((line.text.length || 1) / 42)))}
+              placeholder="読み上げる文章を入力"
+              readOnly={overlay}
+              tabIndex={overlay ? -1 : undefined}
+              onChange={(event) => mutateLine(line.id, { text: event.target.value })}
+              onSelect={(event) => rememberTextSelection(`line:${line.id}`, event.currentTarget)}
+              onKeyUp={(event) => rememberTextSelection(`line:${line.id}`, event.currentTarget)}
+              onClick={(event) => {
+                event.stopPropagation();
+                rememberTextSelection(`line:${line.id}`, event.currentTarget);
+              }}
+            />
+            <button
+              type="button"
+              className="emoji-trigger"
+              title="演技記号を挿入"
+              aria-label="演技記号を挿入"
+              aria-haspopup="dialog"
+              tabIndex={overlay ? -1 : undefined}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={(event) => openEmojiPicker(event, { kind: "line", id: line.id })}
+            ><Smiley size={21} /></button>
+          </div>
+          <div className="line-meta">
+            <label
+              className="voice-chip voice-chip-select"
+              title="この行のボイスを変更"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <i style={{ backgroundColor: voice.color }} />
+              <select
+                value={voice.id}
+                aria-label={`${index + 1}行目のボイス`}
+                disabled={line.status === "running"}
+                tabIndex={overlay ? -1 : undefined}
+                onChange={(event) => changeLineVoice(line.id, event.target.value)}
+              >
+                {project.voices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <CaretDown size={12} aria-hidden="true" />
+            </label>
+            <StatusBadge line={line} />
+            {(line.takes || []).length > 1 && <div className="take-selector" role="group" aria-label={`${index + 1}行目のテイク`}>
+              <span>テイク</span>
+              {(line.takes || []).map((take, takeIndex) => (
+                <button
+                  type="button"
+                  key={take.id}
+                  className={`${take.id === line.selectedTakeId ? "active" : ""} ${take.stale ? "stale" : ""}`}
+                  aria-label={`テイク${takeIndex + 1}${take.stale ? "、旧設定" : ""}`}
+                  aria-pressed={take.id === line.selectedTakeId}
+                  title={`テイク${takeIndex + 1} · ${formatDuration(take.duration)}${take.stale ? " · 変更前の設定" : ""}`}
+                  disabled={line.status === "running"}
+                  tabIndex={overlay ? -1 : undefined}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    chooseLineTake(line.id, take.id);
+                  }}
+                >{takeIndex + 1}</button>
+              ))}
+            </div>}
+            {line.duration && <span>{formatDuration(line.duration)}</span>}
+            {line.generationSeconds && <span>生成 {line.generationSeconds.toFixed(2)}秒</span>}
+            {line.error && <span className="line-error">{line.error}</span>}
+          </div>
+        </div>
+        <div className="line-actions">
+          <IconButton label="複製" tabIndex={overlay ? -1 : undefined} onClick={(event) => { event.stopPropagation(); mutateProject((current) => ({ ...current, lines: duplicateLine(current.lines, line.id) })); }}><Copy size={18} /></IconButton>
+          <IconButton label="現在の設定で新しいテイクを作る" tabIndex={overlay ? -1 : undefined} onClick={(event) => { event.stopPropagation(); regenerateLine(line.id); }} disabled={!model.loaded || line.status === "running"}><ArrowsClockwise size={18} /></IconButton>
+          <IconButton label={line.audioFile && !line.stale ? "再生" : "生成して再生"} tabIndex={overlay ? -1 : undefined} tone="play" onClick={(event) => { event.stopPropagation(); playLine(line.id); }} disabled={!model.loaded || line.status === "running"}>
+            {line.status === "running" ? <SpinnerGap className="spin" size={19} /> : <Play size={19} weight="fill" />}
+          </IconButton>
+          <a className={`icon-button quiet ${line.audioFile ? "" : "disabled"}`} tabIndex={overlay ? -1 : undefined} title="WAVを保存" aria-label="WAVを保存" href={line.audioFile ? audioUrl(line.audioFile) : undefined} download><DownloadSimple size={19} /></a>
+          <IconButton label="削除" tabIndex={overlay ? -1 : undefined} tone="danger" onClick={(event) => { event.stopPropagation(); removeLine(line.id); }} disabled={project.lines.length === 1}><Trash size={18} /></IconButton>
+        </div>
+      </article>
+    );
+  };
+
+  const renderVoiceListItem = (voice, _index, sortable = {}) => {
+    const overlay = Boolean(sortable.overlay);
+    return (
+      <div
+        {...(sortable.containerProps || {})}
+        className={`voice-list-item ${selectedVoiceId === voice.id ? "active" : ""} ${sortable.isDragging ? "sortable-source-hidden" : ""} ${sortable.isSorting ? "sorting" : ""} ${overlay ? "sortable-overlay-item" : ""}`}
+        aria-hidden={overlay || undefined}
+      >
+        <button
+          {...(sortable.handleProps || {})}
+          type="button"
+          className="voice-drag-handle"
+          aria-label={`${voice.name}を並び替え`}
+          title="ドラッグして並び替え"
+          tabIndex={overlay ? -1 : undefined}
+        ><DotsSixVertical size={19} /></button>
+        <button
+          type="button"
+          className="voice-list-select"
+          aria-pressed={selectedVoiceId === voice.id}
+          tabIndex={overlay ? -1 : undefined}
+          onClick={overlay ? undefined : () => setSelectedVoiceId(voice.id)}
+        >
+          <i style={{ backgroundColor: voice.color }} />
+          <span>
+            <strong>{voice.name}</strong>
+            <small>{voice.apiEnabled ? `API · ID ${voice.apiStyleId}` : voice.sourceType === "speaker" ? "Speaker Inversion" : voice.sourceType === "reference" ? "参照音声" : "参照なし"}</small>
+          </span>
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="app-shell">
       <audio ref={audioRef} preload="auto" />
@@ -1309,10 +1517,12 @@ function App() {
               <CaretDown size={16} />
             </button>
             <span className="queue-indicator"><Queue size={18} /><strong>{queueCount}</strong></span>
+          </>}
+          {(view === "script" || view === "live") && <>
             <IconButton label="プロジェクト管理" onClick={openProjectsModal}><FolderOpen size={20} /></IconButton>
             <IconButton label="プロジェクトを保存" onClick={saveProject}><FloppyDisk size={20} /></IconButton>
-            <button className="primary-compact" onClick={() => setActiveModal("export")}><Export size={19} />書き出し</button>
           </>}
+          <IconButton className="global-voice-button" label="ボイスライブラリ" onClick={() => setActiveModal("voices")}><UserSound size={21} /></IconButton>
         </div>
       </header>
 
@@ -1321,7 +1531,10 @@ function App() {
           <aside className="script-sidebar">
             <div className="project-heading">
               <label>PROJECT</label>
-              <input value={project.title} onChange={(event) => mutateProject((current) => ({ ...current, title: event.target.value }))} aria-label="プロジェクト名" />
+              <div className="project-title-row">
+                <strong>{project.title}</strong>
+                <IconButton label="プロジェクト名を変更" onClick={() => openProjectRename()}><PencilSimple size={17} /></IconButton>
+              </div>
               <div className="project-metrics">
                 <span><ListNumbers size={17} />{project.lines.length}行</span>
                 <span><Clock size={17} />{formatDuration(projectSeconds)}</span>
@@ -1332,8 +1545,8 @@ function App() {
               <button onClick={() => setActiveModal("import")}><UploadSimple size={18} />文章をまとめて追加</button>
             </div>
             <div className="sidebar-voice">
-              <span>現在のボイス</span>
-              <button onClick={() => setActiveModal("voices")}><i style={{ backgroundColor: selectedVoice?.color }} /><strong>{selectedVoice?.name}</strong><SlidersHorizontal size={18} /></button>
+              <span>既定のボイス</span>
+              <VoiceSelect voices={project.voices} value={selectedVoiceId} onChange={setSelectedVoiceId} label="台本へ追加する既定のボイス" />
             </div>
           </aside>
 
@@ -1361,106 +1574,23 @@ function App() {
             </div>
 
             <div className="line-list">
-              {project.lines.map((line, index) => {
-                const voice = project.voices.find((item) => item.id === line.voiceId) || project.voices[0];
-                const selected = selectedLineId === line.id;
-                const speaking = speakingLineId === line.id;
-                return (
-                  <article
-                    key={line.id}
-                    className={`script-line ${selected ? "selected" : ""} ${speaking ? "speaking" : ""}`}
-                    onClick={() => { setSelectedLineId(line.id); setSelectedVoiceId(voice.id); }}
-                    draggable
-                    onDragStart={() => setDraggedLineId(line.id)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => handleDrop(line.id)}
-                  >
-                    <button className="drag-handle" type="button" aria-label="ドラッグして並び替え"><DotsSixVertical size={20} /></button>
-                    <span className="line-number">{speaking ? <SpeakerHigh size={21} weight="fill" /> : index + 1}</span>
-                    <div className="line-content">
-                      <div className="text-editor-shell">
-                        <textarea
-                          ref={(node) => {
-                            if (node) lineTextRefs.current.set(line.id, node);
-                            else lineTextRefs.current.delete(line.id);
-                          }}
-                          value={line.text}
-                          rows={Math.max(1, Math.min(3, Math.ceil((line.text.length || 1) / 42)))}
-                          placeholder="読み上げる文章を入力"
-                          onChange={(event) => mutateLine(line.id, { text: event.target.value })}
-                          onSelect={(event) => rememberTextSelection(`line:${line.id}`, event.currentTarget)}
-                          onKeyUp={(event) => rememberTextSelection(`line:${line.id}`, event.currentTarget)}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            rememberTextSelection(`line:${line.id}`, event.currentTarget);
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="emoji-trigger"
-                          title="演技記号を挿入"
-                          aria-label="演技記号を挿入"
-                          aria-haspopup="dialog"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={(event) => openEmojiPicker(event, { kind: "line", id: line.id })}
-                        ><Smiley size={21} /></button>
-                      </div>
-                      <div className="line-meta">
-                        <label
-                          className="voice-chip voice-chip-select"
-                          title="この行のボイスを変更"
-                          onClick={(event) => event.stopPropagation()}
-                          onPointerDown={(event) => event.stopPropagation()}
-                        >
-                          <i style={{ backgroundColor: voice.color }} />
-                          <select
-                            value={voice.id}
-                            aria-label={`${index + 1}行目のボイス`}
-                            disabled={line.status === "running"}
-                            onChange={(event) => changeLineVoice(line.id, event.target.value)}
-                          >
-                            {project.voices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                          </select>
-                          <CaretDown size={12} aria-hidden="true" />
-                        </label>
-                        <StatusBadge line={line} />
-                        {(line.takes || []).length > 1 && <div className="take-selector" role="group" aria-label={`${index + 1}行目のテイク`}>
-                          <span>テイク</span>
-                          {(line.takes || []).map((take, takeIndex) => (
-                            <button
-                              type="button"
-                              key={take.id}
-                              className={`${take.id === line.selectedTakeId ? "active" : ""} ${take.stale ? "stale" : ""}`}
-                              aria-label={`テイク${takeIndex + 1}${take.stale ? "、旧設定" : ""}`}
-                              aria-pressed={take.id === line.selectedTakeId}
-                              title={`テイク${takeIndex + 1} · ${formatDuration(take.duration)}${take.stale ? " · 変更前の設定" : ""}`}
-                              disabled={line.status === "running"}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                chooseLineTake(line.id, take.id);
-                              }}
-                            >{takeIndex + 1}</button>
-                          ))}
-                        </div>}
-                        {line.duration && <span>{formatDuration(line.duration)}</span>}
-                        {line.generationSeconds && <span>生成 {line.generationSeconds.toFixed(2)}秒</span>}
-                        {line.error && <span className="line-error">{line.error}</span>}
-                      </div>
-                    </div>
-                    <div className="line-actions">
-                      <IconButton label="複製" onClick={(event) => { event.stopPropagation(); mutateProject((current) => ({ ...current, lines: duplicateLine(current.lines, line.id) })); }}><Copy size={18} /></IconButton>
-                      <IconButton label="現在の設定で新しいテイクを作る" onClick={(event) => { event.stopPropagation(); regenerateLine(line.id); }} disabled={!model.loaded || line.status === "running"}><ArrowsClockwise size={18} /></IconButton>
-                      <IconButton label={line.audioFile && !line.stale ? "再生" : "生成して再生"} tone="play" onClick={(event) => { event.stopPropagation(); playLine(line.id); }} disabled={!model.loaded || line.status === "running"}>
-                        {line.status === "running" ? <SpinnerGap className="spin" size={19} /> : <Play size={19} weight="fill" />}
-                      </IconButton>
-                      <a className={`icon-button quiet ${line.audioFile ? "" : "disabled"}`} title="WAVを保存" aria-label="WAVを保存" href={line.audioFile ? audioUrl(line.audioFile) : undefined} download><DownloadSimple size={19} /></a>
-                      <IconButton label="削除" tone="danger" onClick={(event) => { event.stopPropagation(); removeLine(line.id); }} disabled={project.lines.length === 1}><Trash size={18} /></IconButton>
-                    </div>
-                  </article>
-                );
-              })}
+              <SortableList
+                items={project.lines}
+                label="読み上げ台本"
+                onReorder={(lines) => mutateProject((current) => ({ ...current, lines }))}
+                renderItem={renderScriptLine}
+                renderOverlay={(line, index) => renderScriptLine(line, index, { overlay: true })}
+              />
               <button className="add-line-card" onClick={() => addLine(selectedLineId)}><Plus size={19} />選択行の下に追加</button>
             </div>
+            <IconButton
+              className="script-export-fab"
+              label="制作ファイルを書き出す"
+              tone="primary"
+              onClick={() => setActiveModal("export")}
+            >
+              <Export size={23} />
+            </IconButton>
           </section>
         </main>
       ) : view === "live" ? (
@@ -1483,7 +1613,7 @@ function App() {
             </div>
             <div className="live-composer">
               <div className="live-options">
-                <label>ボイス<select value={liveVoiceId} onChange={(event) => setLiveVoiceId(event.target.value)}>{project.voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}</select></label>
+                <div className="live-voice-option"><span>ボイス</span><VoiceSelect voices={project.voices} value={liveVoiceId} onChange={setLiveVoiceId} label="配信に使用するボイス" /></div>
                 <div className="preset-tabs">{Object.entries(QUALITY_PRESETS).slice(0, 3).map(([key, preset]) => <button key={key} className={livePreset === key ? "active" : ""} onClick={() => setLivePreset(key)}>{preset.label}<small>{preset.numSteps} steps</small></button>)}</div>
               </div>
               <div className="live-text-editor">
@@ -1585,28 +1715,23 @@ function App() {
       {activeModal === "voices" && <Modal title="ボイスライブラリ" eyebrow="VOICE PROFILES" onClose={() => setActiveModal(null)} wide scrollable>
         <div className="voice-layout">
           <aside className="voice-list">
-            <button className="add-voice" onClick={() => {
-              const voice = {
-                ...DEFAULT_VOICE_API,
-                id: uid("voice"),
-                name: `ボイス ${project.voices.length + 1}`,
-                color: VOICE_COLORS[project.voices.length % VOICE_COLORS.length],
-                sourceType: "none",
-                refEmbed: "",
-                refWavs: [],
-                loraAdapter: "",
-                defaultCaption: "",
-              };
-              mutateProject((current) => ({ ...current, voices: [...current.voices, voice] }));
-              setSelectedVoiceId(voice.id);
-            }}><Plus size={18} />ボイスを追加</button>
-            {project.voices.map((voice) => <button key={voice.id} className={selectedVoiceId === voice.id ? "active" : ""} onClick={() => setSelectedVoiceId(voice.id)}>
-              <i style={{ backgroundColor: voice.color }} />
-              <span>
-                <strong>{voice.name}</strong>
-                <small>{voice.apiEnabled ? `API · ID ${voice.apiStyleId}` : voice.sourceType === "speaker" ? "Speaker Inversion" : voice.sourceType === "reference" ? "参照音声" : "参照なし"}</small>
-              </span>
-            </button>)}
+            <div className="voice-list-toolbar">
+              <span>ボイス</span>
+              <IconButton label="ボイスを追加" onClick={() => {
+                setVoiceNameValue(`ボイス ${project.voices.length + 1}`);
+                setVoiceNameAction("create");
+              }}><Plus size={18} /></IconButton>
+            </div>
+            <SortableList
+              items={project.voices}
+              label="ボイスライブラリ"
+              onReorder={(voices) => {
+                commitVoiceOrder(voices);
+                notify("ボイスの並び順を更新しました", "success");
+              }}
+              renderItem={renderVoiceListItem}
+              renderOverlay={(voice, index) => renderVoiceListItem(voice, index, { overlay: true })}
+            />
           </aside>
           {selectedVoice && <section className="voice-editor">
             <div className={`voice-save-state ${voiceSaveState.status}`} title={voiceSaveState.message}>
@@ -1619,11 +1744,18 @@ function App() {
             </div>
             <div className="voice-name-row">
               <i style={{ backgroundColor: selectedVoice.color }} />
-              <input value={selectedVoice.name} onChange={(event) => updateSelectedVoice({ name: event.target.value })} />
+              <strong>{selectedVoice.name}</strong>
+              <IconButton
+                label="ボイス名を変更"
+                onClick={() => {
+                  setVoiceNameValue(selectedVoice.name);
+                  setVoiceNameAction("rename");
+                }}
+              ><PencilSimple size={18} /></IconButton>
               {project.voices.length > 1 && <IconButton
                 label="このボイスをライブラリから削除"
                 tone="danger"
-                onClick={deleteSelectedVoice}
+                onClick={() => setVoiceDeletePending(true)}
               ><Trash size={18} /></IconButton>}
             </div>
             <div className="source-tabs">
@@ -1698,9 +1830,9 @@ function App() {
               onChange={(event) => setNewProjectName(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter" && !projectBusy) createProject(); }}
             />
-            <button className="primary-button" onClick={createProject} disabled={projectBusy || !newProjectName.trim()}>
-              {projectBusy ? <SpinnerGap className="spin" size={19} /> : <Plus size={19} />}作成
-            </button>
+            <IconButton className="resource-create-button" tone="primary" label="新しいプロジェクトを作成" onClick={createProject} disabled={projectBusy || !newProjectName.trim()}>
+              {projectBusy ? <SpinnerGap className="spin" size={19} /> : <Plus size={19} />}
+            </IconButton>
           </div>
         </section>
         <div className="project-list-heading"><strong>プロジェクト一覧</strong><span>{savedProjects.length}件</span></div>
@@ -1713,13 +1845,60 @@ function App() {
               <span className="saved-project-actions">
                 {isCurrent
                   ? <span className="current-project-badge"><Check size={15} />開いています</span>
-                  : <button className="secondary-button" onClick={() => loadSavedProject(saved)} disabled={projectBusy}><FolderOpen size={17} />開く</button>}
-                <IconButton label={`${saved.name}を削除`} tone="danger" onClick={() => deleteSavedProject(saved)} disabled={projectBusy}><Trash size={17} /></IconButton>
+                  : <IconButton label={`${saved.name}を開く`} onClick={() => loadSavedProject(saved)} disabled={projectBusy}><FolderOpen size={17} /></IconButton>}
+                <IconButton label={`${saved.name}の名前を変更`} onClick={() => openProjectRename(saved)} disabled={projectBusy}><PencilSimple size={17} /></IconButton>
+                <IconButton label={`${saved.name}を削除`} tone="danger" onClick={() => setProjectDeleteTarget(saved)} disabled={projectBusy}><Trash size={17} /></IconButton>
               </span>
             </article>;
           }) : <div className="empty-state"><FolderOpen size={30} /><span>まだプロジェクトがありません。<br />上の欄から新しく作成できます。</span></div>}
         </div>
       </Modal>}
+
+      {projectRenameTarget && <NameDialog
+        title="プロジェクト名を変更"
+        eyebrow="PROJECT NAME"
+        description="表示名とStudio内の保存名を一緒に変更します。台本と生成済み音声はそのまま維持されます。"
+        label="プロジェクト名"
+        value={projectRenameName}
+        onChange={setProjectRenameName}
+        onSubmit={renameProject}
+        onClose={() => setProjectRenameTarget(null)}
+        submitLabel="名前を変更"
+        busy={projectBusy}
+        disabled={!projectRenameName.trim() || projectRenameName.trim() === String(projectRenameTarget.name || "").trim()}
+      />}
+
+      {projectDeleteTarget && <ConfirmDialog
+        title={`「${projectDeleteTarget.name}」を削除しますか？`}
+        eyebrow="DELETE PROJECT"
+        description="このプロジェクトと、ほかのプロジェクトから参照されていない生成済み音声を削除します。この操作は元に戻せません。"
+        onConfirm={() => deleteSavedProject(projectDeleteTarget)}
+        onClose={() => setProjectDeleteTarget(null)}
+        busy={projectBusy}
+      />}
+
+      {voiceNameAction && <NameDialog
+        title={voiceNameAction === "create" ? "ボイスを追加" : "ボイス名を変更"}
+        eyebrow="VOICE NAME"
+        description="台本制作と配信コンソールで共通して表示される名前です。ボイスの設定内容は維持されます。"
+        label="ボイス名"
+        value={voiceNameValue}
+        onChange={setVoiceNameValue}
+        onSubmit={submitVoiceName}
+        onClose={() => setVoiceNameAction(null)}
+        submitLabel={voiceNameAction === "create" ? "追加" : "名前を変更"}
+        maxLength={80}
+        disabled={!voiceNameValue.trim() || (voiceNameAction === "rename" && voiceNameValue.trim() === selectedVoice?.name) || project.voices.some((voice) => voice.id !== (voiceNameAction === "rename" ? selectedVoice?.id : null) && voice.name.toLocaleLowerCase("ja-JP") === voiceNameValue.trim().toLocaleLowerCase("ja-JP"))}
+      />}
+
+      {voiceDeletePending && selectedVoice && <ConfirmDialog
+        title={`「${selectedVoice.name}」を削除しますか？`}
+        eyebrow="DELETE VOICE"
+        description="このボイスを使用している台本行は別のボイスへ切り替わり、再生成が必要になります。"
+        onConfirm={deleteSelectedVoice}
+        onClose={() => setVoiceDeletePending(false)}
+        busy={voiceDeleteBusy}
+      />}
 
       {activeModal === "export" && <Modal title="動画・配信用パッケージ" eyebrow="PRODUCTION EXPORT" onClose={() => setActiveModal(null)} wide><div className="export-layout"><section><div className="export-readiness"><span className={staleOrMissing.length ? "warning" : "ready"}>{staleOrMissing.length ? <WarningCircle size={25} /> : <Check size={25} />}</span><div><strong>{staleOrMissing.length ? `${staleOrMissing.length}行の生成が必要です` : "すべて書き出せます"}</strong><p>{generatedCount}/{project.lines.length}行 · 音声 {formatDuration(projectSeconds)}</p></div>{staleOrMissing.length > 0 && <button className="secondary-button" onClick={generateAllMissing} disabled={!model.loaded || queueCount > 0}><MagicWand size={18} />不足分を生成</button>}</div><label className="gap-setting"><span>行間の無音</span><input type="range" min="0" max="2000" step="50" value={project.exportSettings.gapMs} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, gapMs: Number(event.target.value) } }))} /><strong>{project.exportSettings.gapMs} ms</strong></label><div className="export-checks">{[["includeMaster", "連結したmaster.wav", "動画編集・配信素材の完成音声", VideoCamera], ["includeSrt", "SRT字幕", "一般的な動画編集ソフト向け", FileText], ["includeVtt", "WebVTT字幕", "Web配信・プレイヤー向け", FileText], ["includeCsv", "CSVタイムライン", "開始・終了・声・シードを記録", ListNumbers]].map(([key, title, detail, Icon]) => <label key={key}><input type="checkbox" checked={project.exportSettings[key]} onChange={(event) => mutateProject((current) => ({ ...current, exportSettings: { ...current.exportSettings, [key]: event.target.checked } }))} /><Icon size={21} /><span><strong>{title}</strong><small>{detail}</small></span></label>)}</div></section><aside className="package-preview"><span className="package-icon"><Export size={31} /></span><h3>ZIPに含まれるもの</h3><ul><li>行ごとのPCM WAV</li><li>連結済みマスター音声</li><li>SRT / VTT字幕</li><li>タイムライン情報</li><li>FFmpeg concatリスト</li><li>再編集用のプロジェクトデータ</li></ul><button className="primary-button" onClick={exportProduction} disabled={exportBusy || staleOrMissing.length > 0}>{exportBusy ? <SpinnerGap className="spin" size={20} /> : <DownloadSimple size={20} />}{exportBusy ? "準備中…" : "制作パッケージを保存"}</button></aside></div></Modal>}
     </div>

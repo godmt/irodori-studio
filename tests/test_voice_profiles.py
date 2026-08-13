@@ -60,6 +60,30 @@ class VoiceProfileStoreTests(unittest.TestCase):
             self.assertEqual(second["style_id"], first["style_id"] + 1)
             self.assertEqual(len(store.list(enabled_only=True)), 1)
 
+            store.upsert(
+                VoiceProfileRequest(
+                    profile_id=second["profile_id"],
+                    display_order=0,
+                    name="Second",
+                    enabled=False,
+                    source_type="none",
+                )
+            )
+            store.upsert(
+                VoiceProfileRequest(
+                    profile_id=first["profile_id"],
+                    display_order=1,
+                    name="Main renamed",
+                    style_name="配信",
+                    enabled=True,
+                    source_type="none",
+                )
+            )
+            self.assertEqual(
+                [profile["profile_id"] for profile in VoiceProfileStore(path).list()],
+                [second["profile_id"], first["profile_id"]],
+            )
+
     def test_publishing_missing_speaker_asset_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = VoiceProfileStore(Path(directory) / "profiles.json")

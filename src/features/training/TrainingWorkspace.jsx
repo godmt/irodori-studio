@@ -9,6 +9,7 @@ import {
   HardDrive,
   Lightning,
   MagicWand,
+  PencilSimple,
   Plus,
   SpinnerGap,
   Stop,
@@ -18,6 +19,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { api } from "../../api.js";
+import { ConfirmDialog, IconButton, NameDialog } from "../../components/StudioUI.jsx";
 import "./training.css";
 
 const ACTIVE_STATUSES = new Set(["queued", "preparing", "training", "cancelling"]);
@@ -83,6 +85,10 @@ export function TrainingWorkspace({ bootstrap, notify, onModelUnloaded }) {
   const [maxSteps, setMaxSteps] = useState(3000);
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [renameModelTarget, setRenameModelTarget] = useState(null);
+  const [renameModelName, setRenameModelName] = useState("");
+  const [deleteModelTarget, setDeleteModelTarget] = useState(null);
+  const [deleteJobTarget, setDeleteJobTarget] = useState(null);
 
   const selectedDataset = useMemo(
     () => datasets.find((dataset) => dataset.id === datasetId) || null,
@@ -172,13 +178,48 @@ export function TrainingWorkspace({ bootstrap, notify, onModelUnloaded }) {
   };
 
   const deleteJob = async (job) => {
-    if (!window.confirm(`「${job.name}」の学習履歴を削除しますか？\n生成済みモデルは削除されません。`)) return;
+    if (busy) return;
+    setBusy(true);
     try {
       await api.deleteTrainingJob(job.id);
       setJobs((current) => current.filter((item) => item.id !== job.id));
+      setDeleteJobTarget(null);
       notify("学習履歴を削除しました", "success");
     } catch (error) {
       notify(error.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const renameModel = async () => {
+    const nextName = renameModelName.trim();
+    if (!renameModelTarget || !nextName || busy) return;
+    setBusy(true);
+    try {
+      const renamed = await api.renameTrainedModel(renameModelTarget.id, nextName);
+      setTrainedModels((current) => current.map((model) => model.id === renamed.id ? renamed : model));
+      setRenameModelTarget(null);
+      notify(`学習済みモデル名を「${renamed.name}」へ変更しました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteModel = async (model) => {
+    if (!model || busy) return;
+    setBusy(true);
+    try {
+      await api.deleteTrainedModel(model.id);
+      setTrainedModels((current) => current.filter((item) => item.id !== model.id));
+      setDeleteModelTarget(null);
+      notify(`「${model.name}」を削除しました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -188,6 +229,7 @@ export function TrainingWorkspace({ bootstrap, notify, onModelUnloaded }) {
   };
 
   return (
+    <>
     <main className="training-workspace">
       <section className="training-main">
         <header className="training-header">
@@ -246,12 +288,15 @@ export function TrainingWorkspace({ bootstrap, notify, onModelUnloaded }) {
           {trainedModels.map((model) => <article key={`model-${model.id}`} className="training-history-item completed">
             <span className="training-history-icon"><CheckCircle size={21} weight="fill" /></span>
             <div><strong>{model.name}</strong><span>{methodLabel(model.method)} · 利用可能</span><small>{formatDate(model.created_at)} · {model.dataset_name}</small></div>
-            <span className="training-model-ready" title="ボイスライブラリから選択できます"><Waveform size={17} /></span>
+            <span className="training-resource-actions">
+              <IconButton label={`${model.name}の名前を変更`} onClick={() => { setRenameModelTarget(model); setRenameModelName(model.name); }}><PencilSimple size={16} /></IconButton>
+              <IconButton label={`${model.name}を削除`} tone="danger" onClick={() => setDeleteModelTarget(model)}><Trash size={16} /></IconButton>
+            </span>
           </article>)}
           {jobs.filter((job) => job.id !== activeJob?.id && job.status !== "completed").map((job) => <article key={job.id} className={`training-history-item ${job.status}`}>
             <span className="training-history-icon">{job.status === "completed" ? <CheckCircle size={21} weight="fill" /> : job.status === "failed" ? <WarningCircle size={21} /> : <ClockCounterClockwise size={21} />}</span>
             <div><strong>{job.name}</strong><span>{methodLabel(job.method)} · {statusLabel(job.status)}</span><small>{formatDate(job.updated_at)}{job.asset_path ? ` · 保存済み` : ""}</small></div>
-            {!ACTIVE_STATUSES.has(job.status) && <button type="button" title="履歴を削除" aria-label={`${job.name}の履歴を削除`} onClick={() => deleteJob(job)}><Trash size={17} /></button>}
+            {!ACTIVE_STATUSES.has(job.status) && <IconButton label={`${job.name}の履歴を削除`} tone="danger" onClick={() => setDeleteJobTarget(job)}><Trash size={17} /></IconButton>}
           </article>)}
           {!jobs.length && !trainedModels.length && <div className="training-empty-history"><Brain size={32} /><strong>まだ学習履歴はありません</strong><span>設定を選び、最初のモデルを作成してください。</span></div>}
         </div>
@@ -260,5 +305,39 @@ export function TrainingWorkspace({ bootstrap, notify, onModelUnloaded }) {
         {trainedModels.length > 0 && <p className="training-model-count"><CheckCircle size={18} />利用可能な学習済みモデル {trainedModels.length}件</p>}
       </aside>
     </main>
+
+    {renameModelTarget && <NameDialog
+      title="学習済みモデル名を変更"
+      eyebrow="TRAINED MODEL"
+      description="ボイスライブラリで選択するときの表示名を変更します。学習結果と元の録音データはそのまま維持されます。"
+      label="モデル名"
+      value={renameModelName}
+      onChange={setRenameModelName}
+      onSubmit={renameModel}
+      onClose={() => setRenameModelTarget(null)}
+      submitLabel="名前を変更"
+      busy={busy}
+      maxLength={80}
+      disabled={!renameModelName.trim() || renameModelName.trim() === renameModelTarget.name || trainedModels.some((model) => model.id !== renameModelTarget.id && model.name.toLocaleLowerCase("ja-JP") === renameModelName.trim().toLocaleLowerCase("ja-JP"))}
+    />}
+
+    {deleteModelTarget && <ConfirmDialog
+      title={`「${deleteModelTarget.name}」を削除しますか？`}
+      eyebrow="DELETE MODEL"
+      description="学習済みモデルのファイルを削除します。ボイスライブラリで使用中の場合は、誤って壊さないよう削除を停止します。"
+      onConfirm={() => deleteModel(deleteModelTarget)}
+      onClose={() => setDeleteModelTarget(null)}
+      busy={busy}
+    />}
+
+    {deleteJobTarget && <ConfirmDialog
+      title={`「${deleteJobTarget.name}」の履歴を削除しますか？`}
+      eyebrow="DELETE TRAINING RUN"
+      description="学習ログと一時ファイルを削除します。完成済みの学習済みモデルは削除されません。"
+      onConfirm={() => deleteJob(deleteJobTarget)}
+      onClose={() => setDeleteJobTarget(null)}
+      busy={busy}
+    />}
+    </>
   );
 }
