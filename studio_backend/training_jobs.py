@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -7,26 +8,45 @@ import shutil
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from studio_backend.audio_preprocessing import (
-    EDGE_SILENCE_PADDING_MS,
-    EDGE_SILENCE_THRESHOLD_DBFS,
-    EDGE_SILENCE_WINDOW_MS,
-    TRAINING_LOUDNESS_DB,
-    trim_wav_edge_silence,
+from studio_backend.dataset_preprocessing import (
+    DATASET_AUDIO_PIPELINE_VERSION,
+    preprocessing_is_current,
+    sha256_file,
+    valid_dataset_wav,
 )
+from studio_backend.time_utils import utc_now
 
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
 _STEP_PATTERN = re.compile(r"(?:step=|\|\s*)(\d+)(?:/|\s)")
 _LOSS_PATTERN = re.compile(r"loss=([0-9.eE+-]+)")
+_SPEAKER_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_(\d+)\.speaker\.safetensors$")
+_LORA_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_(\d+)$")
+ACTIVE_TRAINING_STATUSES = {"queued", "preparing", "training", "cancelling"}
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+class TrainingJobError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        code: str,
+        title: str,
+        summary: str,
+        action: str,
+        details: str = "",
+    ) -> None:
+        super().__init__(summary)
+        self.failure = {
+            "schema_version": 1,
+            "code": code,
+            "title": title,
+            "summary": summary,
+            "action": action,
+            "details": details,
+        }
 
 
 def _safe_slug(value: str) -> str:
@@ -67,14 +87,87 @@ class TrainingJobManager:
         for path in self.training_directory.glob("*/job.json"):
             try:
                 job = json.loads(path.read_text(encoding="utf-8"))
+                changed = False
                 if job.get("status") in {"queued", "preparing", "training", "cancelling"}:
                     job["status"] = "interrupted"
                     job["stage"] = "interrupted"
                     job["message"] = "Studioの前回終了時に学習が中断されました"
-                    job["updated_at"] = _now()
+                    job["updated_at"] = utc_now()
+                    changed = True
+                stored_failure = job.get("failure")
+                failure_schema = (
+                    int(stored_failure.get("schema_version") or 0)
+                    if isinstance(stored_failure, dict)
+                    else 0
+                )
+                if job.get("status") == "failed" and failure_schema < 1:
+                    failure = self._failure_from_exception(
+                        RuntimeError(str(job.get("message") or "学習に失敗しました")),
+                        path.parent,
+                    )
+                    job["failure"] = failure
+                    job["message"] = failure["summary"]
+                    changed = True
+                if changed:
                     self._write(job)
             except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                 continue
+
+    @staticmethod
+    def _log_excerpt(path: Path, *, max_lines: int = 80, max_chars: int = 12_000) -> str:
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        excerpt = "\n".join(lines[-max_lines:])
+        return excerpt[-max_chars:]
+
+    def _failure_from_exception(
+        self, exc: Exception, job_directory: Path
+    ) -> dict[str, Any]:
+        log_excerpt = self._log_excerpt(job_directory / "training.log")
+        if isinstance(exc, TrainingJobError):
+            failure = dict(exc.failure)
+            detail_parts = [str(failure.get("details") or "").strip()]
+            if log_excerpt:
+                detail_parts.append(f"--- training.log ---\n{log_excerpt}")
+            failure["details"] = "\n\n".join(part for part in detail_parts if part)
+            return failure
+
+        details = str(exc)
+        if log_excerpt:
+            details = f"{details}\n\n--- training.log ---\n{log_excerpt}"
+
+        diagnostic = f"{exc}\n{log_excerpt}".casefold()
+        if "cuda out of memory" in diagnostic or "outofmemoryerror" in diagnostic:
+            return {
+                "schema_version": 1,
+                "code": "gpu_out_of_memory",
+                "title": "GPUメモリが不足しました",
+                "summary": "学習に必要なGPUメモリを確保できず、処理を停止しました。",
+                "action": "他のGPU処理を終了するか、学習設定の精度・方式を見直してから再開してください。",
+                "details": details,
+            }
+        if (
+            "dataset_iter_error" in diagnostic
+            and ("written=0" in diagnostic or "no valid samples" in diagnostic)
+        ):
+            return {
+                "schema_version": 1,
+                "code": "audio_decoder_unavailable",
+                "title": "Irodori-TTSへ音声を渡せませんでした",
+                "summary": "Studioの前処理済みWAVは正常ですが、Irodori-TTS側の音声読込で全件が除外されました。",
+                "action": "この履歴の再開を実行してください。Studioの互換読込が使用されます。",
+                "details": details,
+            }
+        return {
+            "schema_version": 1,
+            "code": "unexpected_training_error",
+            "title": "学習処理を完了できませんでした",
+            "summary": str(exc) or "予期しない理由で学習処理が停止しました。",
+            "action": "技術情報を確認し、入力や学習設定を直してから再開してください。",
+            "details": details,
+        }
 
     def paths(self) -> dict[str, str]:
         return {
@@ -124,7 +217,7 @@ class TrainingJobManager:
                 raise ValueError("同じ名前の学習済みモデルがすでにあります")
             manifest, model = self._model_manifest(model_id)
             model["name"] = normalized
-            model["updated_at"] = _now()
+            model["updated_at"] = utc_now()
             temporary = manifest.with_suffix(".tmp")
             temporary.write_text(
                 json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -133,7 +226,7 @@ class TrainingJobManager:
             try:
                 job = self._read(model_id)
                 job["name"] = normalized
-                job["updated_at"] = _now()
+                job["updated_at"] = utc_now()
                 self._write(job)
             except KeyError:
                 pass
@@ -179,8 +272,16 @@ class TrainingJobManager:
         temporary.replace(target)
 
     @staticmethod
-    def _summary(job: dict[str, Any]) -> dict[str, Any]:
-        return {key: value for key, value in job.items() if key != "command"}
+    def _summary(
+        job: dict[str, Any], *, include_failure_details: bool = True
+    ) -> dict[str, Any]:
+        summary = {key: value for key, value in job.items() if key != "command"}
+        failure = summary.get("failure")
+        if isinstance(failure, dict) and not include_failure_details:
+            summary["failure"] = {
+                key: value for key, value in failure.items() if key != "details"
+            }
+        return summary
 
     def list(self) -> list[dict[str, Any]]:
         jobs: list[dict[str, Any]] = []
@@ -193,7 +294,7 @@ class TrainingJobManager:
             for path in paths:
                 try:
                     job = json.loads(path.read_text(encoding="utf-8"))
-                    jobs.append(self._summary(job))
+                    jobs.append(self._summary(job, include_failure_details=False))
                 except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                     continue
         return jobs
@@ -202,7 +303,16 @@ class TrainingJobManager:
         with self._lock:
             return self._summary(self._read(job_id))
 
-    def _dataset_rows(self, dataset_id: str, job_directory: Path) -> dict[str, Any]:
+    def has_active_job(self) -> bool:
+        return any(job.get("status") in ACTIVE_TRAINING_STATUSES for job in self.list())
+
+    def _snapshot_dataset_rows(
+        self,
+        dataset_id: str,
+        job_directory: Path,
+        *,
+        overwrite_existing: bool = False,
+    ) -> dict[str, Any]:
         dataset = self.recording_store.load(dataset_id)
         source_root = self.recording_store.dataset_directory(dataset_id)
         accepted = [
@@ -212,28 +322,78 @@ class TrainingJobManager:
         ]
         if not accepted:
             raise ValueError("採用済みの録音がないため学習を開始できません")
-        rows = []
-        audio_directory = job_directory / "prepared-audio"
-        audio_directory.mkdir(parents=True, exist_ok=True)
-        file_results = []
-        for recording in accepted:
+        rows: list[dict[str, Any]] = []
+        snapshot_directory = job_directory / "dataset-snapshot"
+        snapshot_directory.mkdir(parents=True, exist_ok=True)
+        file_results: list[dict[str, Any]] = []
+        fingerprint_rows: list[dict[str, Any]] = []
+        for recording in sorted(accepted, key=lambda item: str(item.get("prompt_id") or "")):
             prompt = recording.get("prompt", {})
             source_audio = (source_root / recording["audio"]).resolve()
-            prepared_audio = (audio_directory / f"{recording['prompt_id']}.wav").resolve()
-            result = trim_wav_edge_silence(source_audio, prepared_audio)
+            if not preprocessing_is_current(recording) or not valid_dataset_wav(source_audio):
+                raise TrainingJobError(
+                    code="dataset_audio_not_ready",
+                    title="学習データセットの音声を使用できません",
+                    summary=f"「{recording['prompt_id']}」の共通音声加工が完了していません。",
+                    action="データセットの音声を再処理してから学習を再開してください。",
+                    details=f"source={source_audio}",
+                )
+            preprocessing = recording["preprocessing"]
+            source_hash = sha256_file(source_audio)
+            if source_hash != str(preprocessing.get("output_sha256") or ""):
+                raise TrainingJobError(
+                    code="dataset_audio_changed",
+                    title="学習データセットの音声が変更されています",
+                    summary=f"「{recording['prompt_id']}」が加工記録と一致しません。",
+                    action="データセットの音声を再処理してから学習を再開してください。",
+                    details=f"source={source_audio}",
+                )
+
+            snapshot_audio = (
+                snapshot_directory / f"{recording['prompt_id']}.wav"
+            ).resolve()
+            reused = (
+                not overwrite_existing
+                and valid_dataset_wav(snapshot_audio)
+                and sha256_file(snapshot_audio) == source_hash
+            )
+            snapshot_method = "reused"
+            if not reused:
+                temporary = snapshot_audio.with_suffix(".tmp")
+                temporary.unlink(missing_ok=True)
+                try:
+                    try:
+                        os.link(source_audio, temporary)
+                        snapshot_method = "hardlink"
+                    except OSError:
+                        shutil.copy2(source_audio, temporary)
+                        snapshot_method = "copy"
+                    temporary.replace(snapshot_audio)
+                finally:
+                    temporary.unlink(missing_ok=True)
             file_results.append(
                 {
                     "prompt_id": recording["prompt_id"],
                     "source_audio": str(source_audio),
-                    "prepared_audio": str(prepared_audio),
-                    **result,
+                    "snapshot_audio": str(snapshot_audio),
+                    "output_sha256": source_hash,
+                    "snapshot_method": snapshot_method,
+                    "pipeline_version": DATASET_AUDIO_PIPELINE_VERSION,
                 }
             )
-            rows.append(
+            row = {
+                "audio": str(snapshot_audio),
+                "text": prompt.get("text", ""),
+                "caption": prompt.get("direction", ""),
+            }
+            rows.append(row)
+            fingerprint_rows.append(
                 {
-                    "audio": str(prepared_audio),
-                    "text": prompt.get("text", ""),
-                    "caption": prompt.get("direction", ""),
+                    "prompt_id": recording["prompt_id"],
+                    "output_sha256": source_hash,
+                    "pipeline_version": DATASET_AUDIO_PIPELINE_VERSION,
+                    "text": row["text"],
+                    "caption": row["caption"],
                 }
             )
         dataset_jsonl = job_directory / "source-dataset.jsonl"
@@ -247,25 +407,201 @@ class TrainingJobManager:
         summary = {
             "schema_version": 1,
             "files": len(rows),
-            "trimmed_files": sum(result["status"] == "trimmed" for result in file_results),
-            "unchanged_files": sum(result["status"] == "unchanged" for result in file_results),
-            "no_activity_files": sum(result["status"] == "no_activity" for result in file_results),
-            "unsupported_files": sum(result["status"] in {"unsupported", "empty"} for result in file_results),
-            "trimmed_seconds": round(sum(result["trimmed_seconds"] for result in file_results), 6),
-            "edge_silence": {
-                "threshold_dbfs": EDGE_SILENCE_THRESHOLD_DBFS,
-                "window_ms": EDGE_SILENCE_WINDOW_MS,
-                "padding_ms": EDGE_SILENCE_PADDING_MS,
-                "internal_silence": "preserved",
-            },
-            "loudness_target_db": TRAINING_LOUDNESS_DB,
-            "source_recordings_modified": False,
+            "dataset_fingerprint": hashlib.sha256(
+                json.dumps(
+                    fingerprint_rows,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "pipeline_version": DATASET_AUDIO_PIPELINE_VERSION,
+            "reused_files": sum(
+                result["snapshot_method"] == "reused" for result in file_results
+            ),
+            "transformations_applied": False,
+            "source_dataset_modified": False,
             "results": file_results,
         }
-        (job_directory / "preprocessing.json").write_text(
+        (job_directory / "dataset-snapshot.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return summary
+
+    @staticmethod
+    def _manifest_marker_path(job_directory: Path) -> Path:
+        return job_directory / "manifest-ready.json"
+
+    def _manifest_is_reusable(
+        self, job_directory: Path, fingerprint: str, expected_count: int
+    ) -> bool:
+        manifest = job_directory / "prepared-manifest.jsonl"
+        marker = self._manifest_marker_path(job_directory)
+        if not manifest.is_file() or not marker.is_file():
+            return False
+        try:
+            metadata = json.loads(marker.read_text(encoding="utf-8"))
+            if metadata.get("dataset_fingerprint") != fingerprint:
+                return False
+            rows = [
+                json.loads(line)
+                for line in manifest.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if not rows:
+                return False
+            if len(rows) != expected_count:
+                return False
+            base = manifest.parent.resolve()
+            for row in rows:
+                latent = (base / str(row["latent_path"])).resolve()
+                if base not in latent.parents or not latent.is_file():
+                    return False
+            return True
+        except (OSError, TypeError, KeyError, json.JSONDecodeError):
+            return False
+
+    @staticmethod
+    def _validate_prepared_manifest(
+        manifest: Path, *, expected_count: int
+    ) -> int:
+        try:
+            raw_lines = manifest.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise TrainingJobError(
+                code="manifest_missing",
+                title="学習データの受け渡しに失敗しました",
+                summary="Irodori-TTSから学習用データが返されませんでした。",
+                action="技術情報を確認してから学習を再開してください。",
+                details=str(exc),
+            ) from exc
+
+        rows: list[dict[str, Any]] = []
+        try:
+            rows = [json.loads(line) for line in raw_lines if line.strip()]
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise TrainingJobError(
+                code="manifest_invalid",
+                title="学習データの受け渡しに失敗しました",
+                summary="Irodori-TTSが返した学習用データを読み取れませんでした。",
+                action="技術情報を確認し、最初からやり直してください。",
+                details=str(exc),
+            ) from exc
+
+        if not rows:
+            raise TrainingJobError(
+                code="manifest_empty",
+                title="学習可能な音声を準備できませんでした",
+                summary=(
+                    f"{expected_count}件の前処理済みWAVから、学習用データが1件も生成されませんでした。"
+                ),
+                action="技術情報で音声読込またはモデル初期化の原因を確認し、再開してください。",
+            )
+        if len(rows) != expected_count:
+            raise TrainingJobError(
+                code="manifest_incomplete",
+                title="一部の音声を学習用に準備できませんでした",
+                summary=(
+                    f"{expected_count}件中{len(rows)}件だけが学習可能な状態になりました。"
+                ),
+                action="欠けた音声を黙って無視せず停止しました。技術情報を確認してから再開してください。",
+            )
+
+        base = manifest.parent.resolve()
+        for index, row in enumerate(rows, start=1):
+            try:
+                latent = (base / str(row["latent_path"])).resolve()
+            except (KeyError, TypeError) as exc:
+                raise TrainingJobError(
+                    code="latent_missing",
+                    title="学習用データが不完全です",
+                    summary=f"{index}件目の音声特徴データを特定できませんでした。",
+                    action="最初からやり直して学習用データを再生成してください。",
+                    details=str(exc),
+                ) from exc
+            if base not in latent.parents or not latent.is_file():
+                raise TrainingJobError(
+                    code="latent_missing",
+                    title="学習用データが不完全です",
+                    summary=f"{index}件目の音声特徴データが見つかりません。",
+                    action="最初からやり直して学習用データを再生成してください。",
+                    details=str(latent),
+                )
+        return len(rows)
+
+    def _mark_manifest_ready(
+        self, job_directory: Path, fingerprint: str, row_count: int
+    ) -> None:
+        marker = self._manifest_marker_path(job_directory)
+        temporary = marker.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "dataset_fingerprint": fingerprint,
+                    "rows": row_count,
+                    "created_at": utc_now(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        temporary.replace(marker)
+
+    @staticmethod
+    def _latest_resume_checkpoint(method: str, output_directory: Path) -> Path | None:
+        checkpoints: list[tuple[int, int, Path]] = []
+        if not output_directory.is_dir():
+            return None
+        if method == "speaker_inversion":
+            for path in output_directory.rglob("checkpoint_*.speaker.safetensors"):
+                match = _SPEAKER_CHECKPOINT_PATTERN.fullmatch(path.name)
+                if match:
+                    checkpoints.append((int(match.group(1)), path.stat().st_mtime_ns, path))
+        else:
+            for path in output_directory.rglob("checkpoint_*"):
+                match = _LORA_CHECKPOINT_PATTERN.fullmatch(path.name)
+                if match and path.is_dir() and (path / "adapter_config.json").is_file():
+                    checkpoints.append((int(match.group(1)), path.stat().st_mtime_ns, path))
+        return max(checkpoints, key=lambda item: (item[0], item[1]))[2] if checkpoints else None
+
+    def _reset_generated_artifacts(
+        self, job_directory: Path, output_directory: Path
+    ) -> None:
+        if job_directory.parent.resolve() != self.training_directory:
+            raise ValueError("学習ジョブの保存先が不正です")
+        if output_directory.parent.resolve() not in {
+            self.speaker_directory.resolve(),
+            self.lora_directory.resolve(),
+        }:
+            raise ValueError("学習済みモデルの保存先が不正です")
+        for name in ("dataset-snapshot", "prepared-audio", "latents"):
+            path = (job_directory / name).resolve()
+            if path.parent == job_directory:
+                shutil.rmtree(path, ignore_errors=True)
+        for name in (
+            "source-dataset.jsonl",
+            "dataset-snapshot.json",
+            "preprocessing.json",
+            "prepared-manifest.jsonl",
+            "manifest-ready.json",
+            "training.log",
+        ):
+            (job_directory / name).unlink(missing_ok=True)
+        if output_directory.is_dir():
+            shutil.rmtree(output_directory)
+
+    def _config_path(self, method: str) -> Path:
+        config_name = (
+            "train_v4_small_speaker_inversion.yaml"
+            if method == "speaker_inversion"
+            else "train_v4_small_lora.yaml"
+        )
+        path = self.irodori_root / "configs" / config_name
+        if not path.is_file():
+            raise FileNotFoundError(f"Irodori-TTSの学習設定が見つかりません: {config_name}")
+        return path
 
     def create(self, payload: Any) -> dict[str, Any]:
         name = payload.name.strip()
@@ -276,10 +612,7 @@ class TrainingJobManager:
             raise ValueError("採用済みの録音がないため学習を開始できません")
         if not (self.irodori_root / "train.py").is_file():
             raise FileNotFoundError("Irodori-TTSのtrain.pyが見つかりません")
-        if any(
-            job.get("status") in {"queued", "preparing", "training", "cancelling"}
-            for job in self.list()
-        ):
+        if self.has_active_job():
             raise ValueError("別の学習が実行中です。完了または停止してから開始してください")
 
         method = payload.method
@@ -289,16 +622,9 @@ class TrainingJobManager:
         slug = _safe_slug(name)
         output_root = self.speaker_directory if method == "speaker_inversion" else self.lora_directory
         output_directory = (output_root / f"{slug}-{job_id[:8]}").resolve()
-        config_name = (
-            "train_v4_small_speaker_inversion.yaml"
-            if method == "speaker_inversion"
-            else "train_v4_small_lora.yaml"
-        )
-        config_path = self.irodori_root / "configs" / config_name
-        if not config_path.is_file():
-            raise FileNotFoundError(f"Irodori-TTSの学習設定が見つかりません: {config_name}")
+        config_path = self._config_path(method)
 
-        created_at = _now()
+        created_at = utc_now()
         job = {
             "schema_version": 1,
             "id": job_id,
@@ -323,15 +649,20 @@ class TrainingJobManager:
             "completed_at": None,
             "output_path": str(output_directory),
             "asset_path": None,
-            "preprocessing": None,
+            "failure": None,
+            "dataset_snapshot": None,
             "log_path": str((job_directory / "training.log").resolve()),
             "command": [],
+            "attempt": 1,
+            "resume_mode": "new",
+            "run_output_path": str(output_directory),
         }
         with self._lock:
             self._write(job)
         thread = threading.Thread(
             target=self._run,
-            args=(job_id, config_path, output_directory),
+            args=(job_id, config_path, output_directory, output_directory),
+            kwargs={"resume": False, "overwrite_existing": False},
             daemon=True,
             name=f"training-{job_id[:8]}",
         )
@@ -342,28 +673,83 @@ class TrainingJobManager:
         with self._lock:
             job = self._read(job_id)
             job.update(patch)
-            job["updated_at"] = _now()
+            job["updated_at"] = utc_now()
             self._write(job)
             return job
 
-    def _run(self, job_id: str, config_path: Path, output_directory: Path) -> None:
+    def _run(
+        self,
+        job_id: str,
+        config_path: Path,
+        output_directory: Path,
+        run_output_directory: Path,
+        *,
+        resume: bool,
+        overwrite_existing: bool,
+    ) -> None:
         job_directory = self._job_directory(job_id)
         log_path = job_directory / "training.log"
         try:
             job = self._read(job_id)
-            preprocessing = self._dataset_rows(job["dataset_id"], job_directory)
-            row_count = int(preprocessing["files"])
-            preprocessing_summary = {
-                key: value for key, value in preprocessing.items() if key != "results"
+            if job.get("status") in {"cancelled", "cancelling"}:
+                return
+            dataset_snapshot = self._snapshot_dataset_rows(
+                job["dataset_id"],
+                job_directory,
+                overwrite_existing=overwrite_existing,
+            )
+            if self._read(job_id).get("status") in {"cancelled", "cancelling"}:
+                self._update(
+                    job_id,
+                    status="cancelled",
+                    stage="cancelled",
+                    message="学習を中止しました",
+                    completed_at=utc_now(),
+                )
+                return
+            row_count = int(dataset_snapshot["files"])
+            dataset_snapshot_summary = {
+                key: value for key, value in dataset_snapshot.items() if key != "results"
             }
             prepared_manifest = job_directory / "prepared-manifest.jsonl"
             latent_directory = job_directory / "latents"
             latent_directory.mkdir(exist_ok=True)
+            manifest_reused = (
+                resume
+                and not overwrite_existing
+                and self._manifest_is_reusable(
+                    job_directory,
+                    str(dataset_snapshot["dataset_fingerprint"]),
+                    row_count,
+                )
+            )
+            resume_checkpoint = (
+                self._latest_resume_checkpoint(job["method"], output_directory)
+                if resume and not overwrite_existing
+                else None
+            )
+            previous_snapshot = job.get("dataset_snapshot") or job.get("preprocessing") or {}
+            previous_fingerprint = previous_snapshot.get(
+                "dataset_fingerprint"
+            )
+            if (
+                resume_checkpoint is not None
+                and previous_fingerprint
+                and previous_fingerprint != dataset_snapshot["dataset_fingerprint"]
+            ):
+                raise ValueError(
+                    "中断後に学習データが変更されています。全上書きで最初からやり直してください"
+                )
 
             python = Path(sys.executable).resolve()
+            prepare_runner = Path(__file__).with_name("irodori_prepare_runner.py").resolve()
             prepare_command = [
                 str(python),
+                str(prepare_runner),
+                "--script",
                 str(self.irodori_root / "prepare_manifest.py"),
+                "--audio-root",
+                str(job_directory / "dataset-snapshot"),
                 "--dataset",
                 "json",
                 "--data-files",
@@ -381,7 +767,7 @@ class TrainingJobManager:
                 "--latent-dir",
                 str(latent_directory),
                 "--normalize-db",
-                str(TRAINING_LOUDNESS_DB),
+                "none",
                 "--device",
                 job["device"],
             ]
@@ -393,7 +779,7 @@ class TrainingJobManager:
                 "--manifest",
                 str(prepared_manifest),
                 "--output-dir",
-                str(output_directory),
+                str(run_output_directory),
                 "--init-checkpoint",
                 job["checkpoint"],
                 "--device",
@@ -405,20 +791,53 @@ class TrainingJobManager:
                 "--no-wandb",
                 "--no-progress",
             ]
+            if resume_checkpoint is not None:
+                if job["method"] == "speaker_inversion":
+                    train_command.extend(
+                        ["--speaker-inversion-init-embedding", str(resume_checkpoint)]
+                    )
+                else:
+                    train_command.extend(["--resume", str(resume_checkpoint)])
             self._update(
                 job_id,
                 status="preparing",
                 stage="preparing",
                 message=(
-                    f"{row_count}件を準備中 · "
-                    f"{preprocessing['trimmed_files']}件の前後無音を調整"
+                    f"{row_count}件の加工済み音声を学習用に固定しています"
                 ),
-                preprocessing=preprocessing_summary,
+                dataset_snapshot=dataset_snapshot_summary,
+                preprocessing=None,
                 command=[prepare_command, train_command],
+                resume_checkpoint=(
+                    str(resume_checkpoint) if resume_checkpoint is not None else None
+                ),
+                manifest_reused=manifest_reused,
+                run_output_path=str(run_output_directory),
             )
             with log_path.open("a", encoding="utf-8") as log:
-                log.write(f"[studio] model={job['name']} method={job['method']}\n")
-                self._execute(job_id, prepare_command, log, stage="preparing")
+                log.write(
+                    f"[studio] model={job['name']} method={job['method']} "
+                    f"attempt={job.get('attempt', 1)} resume={resume} "
+                    f"overwrite={overwrite_existing}\n"
+                )
+                if manifest_reused:
+                    log.write("[studio] reusable manifest and latents found; skipped\n")
+                else:
+                    prepared_manifest.unlink(missing_ok=True)
+                    self._manifest_marker_path(job_directory).unlink(missing_ok=True)
+                    shutil.rmtree(latent_directory, ignore_errors=True)
+                    latent_directory.mkdir(exist_ok=True)
+                    self._execute(job_id, prepare_command, log, stage="preparing")
+                    if self._read(job_id).get("status") == "cancelled":
+                        return
+                    prepared_rows = self._validate_prepared_manifest(
+                        prepared_manifest, expected_count=row_count
+                    )
+                    self._mark_manifest_ready(
+                        job_directory,
+                        str(dataset_snapshot["dataset_fingerprint"]),
+                        prepared_rows,
+                    )
                 if self._read(job_id).get("status") == "cancelled":
                     return
                 self._update(
@@ -427,11 +846,11 @@ class TrainingJobManager:
                     stage="training",
                     message="モデルを学習しています",
                 )
-                output_directory.mkdir(parents=True, exist_ok=True)
+                run_output_directory.mkdir(parents=True, exist_ok=True)
                 self._execute(job_id, train_command, log, stage="training")
             if self._read(job_id).get("status") == "cancelled":
                 return
-            asset_path = self._final_asset(job["method"], output_directory)
+            asset_path = self._final_asset(job["method"], run_output_directory)
             model = {
                 "schema_version": 1,
                 "id": job_id,
@@ -440,9 +859,10 @@ class TrainingJobManager:
                 "dataset_id": job["dataset_id"],
                 "dataset_name": job["dataset_name"],
                 "checkpoint": job["checkpoint"],
-                "created_at": _now(),
+                "created_at": utc_now(),
                 "asset_path": str(asset_path),
                 "output_path": str(output_directory),
+                "run_output_path": str(run_output_directory),
             }
             (output_directory / "studio-model.json").write_text(
                 json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -454,19 +874,22 @@ class TrainingJobManager:
                 step=job["max_steps"],
                 progress=100,
                 message="学習が完了しました",
-                completed_at=_now(),
+                completed_at=utc_now(),
                 asset_path=str(asset_path),
+                failure=None,
             )
         except Exception as exc:
             try:
                 job = self._read(job_id)
                 if job.get("status") != "cancelled":
+                    failure = self._failure_from_exception(exc, job_directory)
                     self._update(
                         job_id,
                         status="failed",
                         stage="failed",
-                        message=str(exc),
-                        completed_at=_now(),
+                        message=failure["summary"],
+                        failure=failure,
+                        completed_at=utc_now(),
                     )
             except Exception:
                 pass
@@ -536,7 +959,7 @@ class TrainingJobManager:
                 status="cancelled",
                 stage="cancelled",
                 message="学習を中止しました",
-                completed_at=_now(),
+                completed_at=utc_now(),
             )
             return
         if return_code != 0:
@@ -562,7 +985,7 @@ class TrainingJobManager:
             job.update(
                 status="cancelling",
                 message="安全に停止しています",
-                updated_at=_now(),
+                updated_at=utc_now(),
             )
             self._write(job)
             process = self._processes.get(job_id)
@@ -573,10 +996,78 @@ class TrainingJobManager:
                     status="cancelled",
                     stage="cancelled",
                     message="学習を中止しました",
-                    completed_at=_now(),
+                    completed_at=utc_now(),
                 )
                 self._write(job)
             return self._summary(job)
+
+    def resume(
+        self, job_id: str, *, overwrite_existing: bool = False
+    ) -> dict[str, Any]:
+        with self._lock:
+            job = self._read(job_id)
+            if job.get("status") not in {"cancelled", "failed", "interrupted"}:
+                raise ValueError("中断・失敗・停止した学習だけ再開できます")
+            if self.has_active_job():
+                raise ValueError("別の学習が実行中です。完了または停止してから再開してください")
+            output_directory = Path(str(job["output_path"])).resolve()
+            job_directory = self._job_directory(job_id)
+            attempt = int(job.get("attempt") or 1) + 1
+            if overwrite_existing:
+                self._reset_generated_artifacts(job_directory, output_directory)
+                run_output_directory = output_directory
+                resume_mode = "overwrite"
+                step = 0
+                progress = 0
+                loss = None
+            else:
+                run_output_directory = (
+                    output_directory / "resume-runs" / f"{attempt:03d}"
+                ).resolve()
+                if output_directory not in run_output_directory.parents:
+                    raise ValueError("学習再開先が不正です")
+                resume_mode = "skip_existing"
+                step = int(job.get("step") or 0)
+                progress = float(job.get("progress") or 0)
+                loss = job.get("loss")
+            job.update(
+                status="queued",
+                stage="queued",
+                message=(
+                    "既存成果物を削除して最初からやり直します"
+                    if overwrite_existing
+                    else "既存成果物を再利用して学習を再開します"
+                ),
+                completed_at=None,
+                attempt=attempt,
+                resume_mode=resume_mode,
+                run_output_path=str(run_output_directory),
+                step=step,
+                progress=progress,
+                loss=loss,
+                asset_path=None,
+                failure=None,
+                updated_at=utc_now(),
+            )
+            self._write(job)
+            config_path = self._config_path(str(job["method"]))
+        thread = threading.Thread(
+            target=self._run,
+            args=(
+                job_id,
+                config_path,
+                output_directory,
+                run_output_directory,
+            ),
+            kwargs={
+                "resume": not overwrite_existing,
+                "overwrite_existing": overwrite_existing,
+            },
+            daemon=True,
+            name=f"training-{job_id[:8]}-resume-{attempt}",
+        )
+        thread.start()
+        return self._summary(job)
 
     def delete(self, job_id: str) -> None:
         with self._lock:

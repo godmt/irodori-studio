@@ -6,7 +6,6 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +20,7 @@ from irodori_tts.inference_runtime import (
 )
 
 from studio_backend.models import ModelLoadRequest, SynthesisPayload
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from studio_backend.time_utils import utc_now
 
 
 @dataclass

@@ -64,7 +64,16 @@ export const api = {
       "X-Irodori-Recording-Metadata": encodeJsonHeader(metadata),
     },
   }).then((response) => response.json()),
+  reviewDatasetRecording: (datasetId, promptId, payload) => request(`/api/recording-datasets/${encodeURIComponent(datasetId)}/recordings/${encodeURIComponent(promptId)}/review`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }).then((response) => response.json()),
   deleteRecordingDataset: (id) => request(`/api/recording-datasets/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
+  audioImportJobs: () => request("/api/audio-import-jobs").then((response) => response.json()),
+  createAudioImportJob: (payload) => request("/api/audio-import-jobs", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
+  audioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}`).then((response) => response.json()),
+  cancelAudioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((response) => response.json()),
+  deleteAudioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
   trainingJobs: () => request("/api/training-jobs").then((response) => response.json()),
   trainedModels: () => request("/api/trained-models").then((response) => response.json()),
   renameTrainedModel: (id, name) => request(`/api/trained-models/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name }) }).then((response) => response.json()),
@@ -72,6 +81,10 @@ export const api = {
   createTrainingJob: (payload) => request("/api/training-jobs", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
   trainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}`).then((response) => response.json()),
   cancelTrainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((response) => response.json()),
+  resumeTrainingJob: (id, overwriteExisting = false) => request(`/api/training-jobs/${encodeURIComponent(id)}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ overwrite_existing: overwriteExisting }),
+  }).then((response) => response.json()),
   deleteTrainingJob: (id) => request(`/api/training-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
   dialog: (kind, multiple = false) => request("/api/dialog", { method: "POST", body: JSON.stringify({ kind, multiple }) }).then((response) => response.json()),
   exportProject: async (payload) => {

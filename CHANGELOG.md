@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-08-14
+
+- Added the long-audio preprocessing core for multiple WAV/FLAC/MP3/M4A-compatible single-speaker sources: bounded overlapping decode windows, Silero VAD, faster-whisper Japanese transcription, automatic QC/adoption, optional transcript review state, job-local lossless FLAC intermediates, stable rerun IDs, atomic 48 kHz PCM16 WAV dataset commits, and persistent cancellable jobs without creating a giant master WAV.
+- Added resumable Training jobs. Existing validated dataset snapshots and completed latent manifests are skipped by default, LoRA resumes full trainer checkpoints, Speaker Inversion warm-starts from the latest periodic embedding, and explicit all-overwrite restart removes only generated job/model artifacts.
+- Established the product-wide learning-data contract: immutable RAW sources, versioned method-independent canonical samples, and model-specific job artifacts. Recording and import now apply edge-only trimming and -16 LUFS normalization once at dataset commit, while Training verifies and snapshots those WAVs without double normalization.
+
+- Aligned tests and documentation with the current codebase, removed the retired Recorder ZIP-export path and obsolete line-order helpers, and consolidated shared audio, path, timestamp, resource-name, and playback-control behavior.
+- Shortened the Japanese Live workspace label from `配信コンソール` to `配信`.
 - Unified Script and Voice Library reordering with animated insertion gaps, opaque full-card drag overlays, smooth drop motion, pointer/touch support, and accessible keyboard sorting.
 - Standardized the Voice Library as the rightmost header action in every workspace and added persistent drag-and-drop voice ordering shared by all voice selectors.
 - Moved production export out of the shared header into a Script-only floating action, so Live no longer exposes an unrelated export workflow.
@@ -11,12 +19,12 @@
 - Changed Studio setup to infer the PyTorch backend from the selected Irodori-TTS `.venv`, with explicit `-TorchBackend` retained only as an override and saved configuration/hardware used as fallbacks.
 - Fixed Script voice assignment so the selected current voice is applied to new and imported lines, existing lines can change voice from their voice-name control, and the resulting audio is marked for regeneration.
 - Added lifecycle cleanup for generated Script audio and metadata when lines, discarded takes, cancelled generations, or projects are deleted, while retaining files shared by another saved project.
-- Added conservative Recorder-dataset preprocessing for training: job-local WAV copies, edge-only silence trimming with 180 ms padding, preserved internal pauses, explicit -16 dB loudness normalization, and a per-job preprocessing report.
+- Added conservative dataset audio preparation with edge-only silence trimming, 180 ms padding, preserved internal pauses, -16 LUFS normalization, and per-recording provenance hashes.
 - Added the Training workspace with Speaker Inversion as the recommended default, optional LoRA fine-tuning, direct Recorder dataset selection, named models, background progress/cancellation, durable job history, and Studio-owned model directories.
 - Rebuilt Irodori Starter 120 as corpus v2 with 120 unique prompts, explicit Japanese mora and foreign-mora coverage, and 20 distinct fillers or backchannels; versioned prompt IDs prevent stale v1 recordings from being attached to revised text.
 - Added the top-level Recording Studio with switchable Irodori Starter 120, AICA Character Core 200, and AICA Full 500 stages over one shared recording root, browser microphone selection, 48 kHz mono WAV capture, waveform and quality review, and redo/adopt navigation.
-- Replaced browser-only recorder storage and the manual export workflow with named Studio datasets under `workspace/recordings`, including create/select/delete management, automatic training manifests, stable IDs for the upcoming Training workspace, and safe legacy IndexedDB migration.
-- Added pinned AICA corpus provenance, CC0 1.0 licensing notices, performance directions, and credit metadata in AICA recording exports.
+- Replaced browser-only recorder storage and the manual export workflow with named Studio datasets under `workspace/recordings`, including create/select/delete management, automatic training manifests, stable IDs shared with Training, and safe legacy IndexedDB migration.
+- Added pinned AICA corpus provenance, CC0 1.0 licensing notices, performance directions, and credit metadata in Studio recording datasets.
 - Added user-facing local project creation, opening, saving and deletion with atomic server persistence.
 - Reworked the shared Voice Library so Speaker Inversion, reference audio, LoRA and VOICEVOX publication settings auto-save independently of projects and restore by stable profile ID.
 - Added synchronized playback volume and output-device selection to Script and Live for OBS and virtual-audio routing.

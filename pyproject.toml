@@ -1,21 +1,25 @@
 [project]
 name = "irodori-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local production, streaming, and dataset tooling for Irodori-TTS"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
+    "faster-whisper>=1.2.1",
     "httpx>=0.28.0",
     "numpy>=1.26.0",
     "pydantic>=2.10.0",
+    "pyloudnorm>=0.1.1",
+    "scipy>=1.11.0",
     "soundfile>=0.12.0",
     "uvicorn>=0.34.0",
 ]
 
 [dependency-groups]
 dev = [
+    "pytest>=8.3.0",
     "ruff>=0.9.0",
 ]
 

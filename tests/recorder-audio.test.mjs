@@ -10,7 +10,7 @@ import {
   resampleAudio,
 } from "../src/features/recorder/recorder-audio.js";
 
-test("recorder audio is flattened and resampled for 48 kHz export", () => {
+test("recorder audio is flattened and resampled for 48 kHz dataset storage", () => {
   const flattened = flattenBuffers([new Float32Array([0, 0.5]), new Float32Array([-0.5, 1])]);
   assert.deepEqual([...flattened], [0, 0.5, -0.5, 1]);
 

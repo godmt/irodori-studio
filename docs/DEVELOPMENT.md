@@ -19,7 +19,8 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
 - The frontend communicates only with the local Studio HTTP API.
 - Recorder microphone capture happens in the browser, then accepted and review recordings are saved through the local Studio HTTP API under ignored `workspace/recordings/`.
-- Training runs Irodori-TTS preprocessing and training in child processes. Studio owns job state, cancellation and output discovery but never copies the trainer source.
+- Long-audio imports run in a dedicated child process over bounded overlapping windows. Studio owns persistent job/cancellation state, VAD/ASR/QC reports and the atomic commit into a named recording dataset; selected source media is copied into dataset-owned immutable `raw/` storage and is never expanded into a whole master WAV.
+- Training runs only model-specific Irodori-TTS preparation and training in child processes. Studio owns job state, cancellation and output discovery but never copies the trainer source or reapplies dataset-level audio transforms.
 - Generated files, server-saved projects, named recording datasets, training state, learned models and the shared voice library live under ignored `workspace/`.
 
 ## Source map
@@ -27,7 +28,9 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 ```text
 src/
   App.jsx                 Main application and current Script/Live workspaces
+  api.js                  Local Studio HTTP API client
   audio-output.js         Browser output-device discovery and preference helpers
+  components/             Shared dialogs, controls and sortable-list interaction
   defaults.js            Persistent project schema and migration defaults
   project-state.js       Pure line, take and ordering operations
   emoji-data.js          Official Irodori performance emoji metadata
@@ -35,17 +38,36 @@ src/
   features/recorder/     Corpus UI, microphone capture, WAV conversion and named dataset management
   features/training/     Guided Speaker Inversion/LoRA setup, progress and model history
 studio_backend/
+  audio_import.py        Windowed decode, VAD, ASR, QC and lossless clip creation
+  audio_import_jobs.py   Persistent long-audio worker process and atomic dataset handoff
+  audio_import_worker.py Isolated faster-whisper entry point
+  audio_utils.py         Shared mono loading and deterministic linear resampling
+  dataset_preprocessing.py Versioned method-independent dataset audio pipeline
   engine.py              Resident runtime and FIFO synthesis queue
   models.py              HTTP request schemas
   exporter.py            WAV/subtitle/timeline production ZIP
+  path_utils.py          Shared safe local filename generation
   project_store.py       Atomic local project persistence
   recording_datasets.py Named recording datasets and training-ready manifests
+  time_utils.py          Shared persistent UTC timestamps
   training_jobs.py      External Irodori-TTS preprocessing/training process manager
   voice_profiles.py      Shared Voice Library and stable VOICEVOX speaker/style persistence
   voicevox_api.py        Compatibility endpoints
   runtime_paths.py       External Irodori-TTS discovery and validation
 server.py                Local API, static SPA host and process orchestration
 ```
+
+`server.py` and `studio_backend/models.py` are the source of truth for the Studio HTTP
+API. While Studio is running, `/docs` provides the generated interactive reference and
+`/openapi.json` provides the machine-readable contract. Do not maintain a second,
+hand-written endpoint schema. The API owns startup state and assets, model lifecycle,
+synthesis jobs, generated audio, projects, the shared Voice Library, recording datasets,
+long-audio import jobs, training jobs, learned models, production export and native file selection.
+
+The VOICEVOX-compatible service is the separate FastAPI application in
+`studio_backend/voicevox_api.py`. It shares the resident engine and Voice Library store,
+but does not use the Studio `/api` prefix. Its supported surface is recorded in
+`docs/VOICEVOX_API_COMPATIBILITY.md`.
 
 ## Local development
 
@@ -79,6 +101,8 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 uv run ruff check server.py studio_backend tests
 ```
 
+The application code is the behavioral source of truth. Tests must assert current user-visible contracts and persistence boundaries; delete tests only when the corresponding code path is removed. Shared backend helpers have focused tests in `test_audio_utils.py`, `test_path_utils.py` and `test_models.py`; move a test when implementation ownership moves instead of leaving it attached to an unrelated module. `README.md`, `DESIGN.md`, and documents under `docs/` describe implemented behavior unless a section is explicitly labeled as a future candidate.
+
 For changes to synthesis, voice selection, take handling or export, also run Studio against a real loaded model and verify the browser interaction. Avoid treating build success as runtime verification.
 
 ## Persistent schema compatibility
@@ -87,9 +111,11 @@ Browser projects are hydrated through `hydrateProject()` in `src/defaults.js`. A
 
 `studio_backend/project_store.py` owns atomic local project creation, listing, loading, saving and deletion under `workspace/projects/`, including collection of every generated WAV referenced by selected and alternate takes. `studio_backend/generated_audio.py` safely removes released WAV basenames and matching JSON metadata. Line and capped-take deletion calls `/api/audio/release`; project save/delete performs the same reference-aware cleanup on the server. Never remove user-supplied reference audio, and retain generated files still referenced by another saved project. Project storage formats are implementation details and must not appear in the user-facing Studio project manager.
 
-`studio_backend/recording_datasets.py` owns named datasets under human-readable `workspace/recordings/<dataset-name>/` directories. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, and `wavs/`. The folder name follows the user-visible name and changes on rename, while the opaque ID inside `dataset.json` remains stable and is resolved by scanning manifests. That stable ID and the local API list are the contract for the Training workspace. Migrate legacy ID-named folders on store initialization, add a numeric suffix only for filesystem collisions, and reject duplicate user-visible names. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
+`studio_backend/recording_datasets.py` owns named datasets under human-readable `workspace/recordings/<dataset-name>/` directories. Each directory contains `dataset.json`, accepted-only `dataset.jsonl`, immutable source material in `raw/`, and canonical PCM16 WAV clips in `wavs/`. `studio_backend/dataset_preprocessing.py` is the method-independent boundary shared by microphone and imported utterances: mono 48 kHz PCM16, -45 dBFS edge detection with 10 ms windows and 180 ms padding, internal-pause preservation, -16 LUFS normalization with peak safety, and versioned source/output hashes. Never overwrite RAW. Import FLAC is job-local and temporary: create and validate its canonical WAV, atomically update both manifests, then delete the FLAC. Store initialization rebuilds legacy derived clips from a retained RAW copy and leaves the last usable bytes available if migration fails. The folder name follows the user-visible name and changes on rename, while the opaque ID inside `dataset.json` remains stable and is resolved by scanning manifests. That stable ID and the local API list are the contract for the Training workspace. Migrate legacy ID-named folders on store initialization, adopt a matching user-created `raw/`-only folder without moving its sources, add a numeric suffix only for filesystem collisions, and reject duplicate user-visible names. Deleting a dataset removes Studio-managed derived clips and manifests but leaves its `raw/` sources intact. Recorder saves automatically; do not make ZIP export the primary handoff. Legacy IndexedDB recordings are cleared only after every WAV has been copied successfully.
 
-`studio_backend/training_jobs.py` owns job state under `workspace/training/<job-id>/`, invokes the configured external checkout's `prepare_manifest.py` and `train.py`, and writes final assets beneath `workspace/models/speaker-embeddings/` or `workspace/models/lora/`. `studio_backend/audio_preprocessing.py` makes job-local WAV copies, trims only leading/trailing silence at -45 dBFS with 10 ms analysis windows and 180 ms boundary padding, preserves internal pauses, and records the result in `preprocessing.json`. DACVAE encoding then applies an explicit -16 dB loudness target. The default workflow is Speaker Inversion; LoRA remains an explicit advanced choice. Every completed output carries a `studio-model.json` registry record so the user-visible model name survives deletion of disposable job history. Never overwrite source recordings or place absolute machine paths in committed files.
+`studio_backend/audio_import.py` decodes each source as five-minute windows with overlap at least as long as the maximum utterance, so MP3 and multi-gigabyte WAV inputs have bounded memory use and no boundary duplicates. It detects speech with faster-whisper's packaged Silero VAD, transcribes each speech unit independently, writes compact 48 kHz mono FLAC intermediates, and records source offsets plus ASR/audio metrics. Candidate IDs derive from source identity and absolute time, so a rerun resolves to the same dataset WAV. `audio_import_worker.py` isolates GPU memory; `audio_import_jobs.py` owns status, logs, cancellation and the final all-or-rollback WAV commit into the selected dataset under `workspace/imports/<job-id>/`. Existing WAVs are skipped by default and replaced only when `overwrite_existing` is explicit. Structurally valid candidates are accepted automatically. Review updates may correct text or change acceptance later, but review is not a required stage before Training.
+
+`studio_backend/training_jobs.py` owns job state under `workspace/training/<job-id>/`, invokes the configured external checkout's `prepare_manifest.py` and `train.py`, and writes final assets beneath `workspace/models/speaker-embeddings/` or `workspace/models/lora/`. It verifies every accepted canonical WAV against its recorded hash and creates an immutable job-local `dataset-snapshot/` plus `dataset-snapshot.json`; it does not trim or normalize again. Irodori preparation runs with normalization disabled and creates only model-specific DACVAE latents. Resume validates and skips an unchanged snapshot and fingerprinted complete latent manifest. LoRA passes its latest adapter checkpoint to `train.py --resume`; Speaker Inversion follows the upstream supported behavior and passes the latest periodic embedding as `--speaker-inversion-init-embedding`. Normal resume writes into `resume-runs/<attempt>` so old checkpoints remain immutable. Explicit overwrite removes only validated job/model output roots before rebuilding. The default workflow is Speaker Inversion; LoRA remains an explicit advanced choice. Every completed output carries a `studio-model.json` registry record so the user-visible model name survives deletion of disposable job history. Never overwrite dataset or RAW audio, and never place absolute machine paths in committed files.
 
 Server-saved voice profiles under `workspace/voices/profiles.json` are the source of truth for the shared Voice Library and require stable `profile_id`, `speaker_uuid` and `style_id`. Projects retain a compatible snapshot plus the profile ID. Reconcile by ID on load; only use a unique exact-name match to migrate legacy projects. Do not regenerate stable IDs during ordinary edits. The legacy `workspace/voicevox/profiles.json` is copied once when the shared store does not yet exist.
 

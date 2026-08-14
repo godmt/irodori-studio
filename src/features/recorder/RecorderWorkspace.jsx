@@ -24,6 +24,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { ConfirmDialog, IconButton, Modal, NameDialog } from "../../components/StudioUI.jsx";
+import { resolveLearningDatasetId } from "../../learning-datasets.js";
 import { CORPUS_ROOT, CORPUS_STAGES, getCorpusPrompts, getCorpusStage } from "./corpus-catalog.js";
 import {
   analyseAudio,
@@ -35,7 +36,6 @@ import {
   resampleAudio,
 } from "./recorder-audio.js";
 import { enumerateAudioInputs } from "./recorder-devices.js";
-import { selectAcceptedPrompts } from "./recorder-export.js";
 import {
   clearLegacyRecordings,
   createRecordingDataset,
@@ -51,7 +51,6 @@ import "./recorder.css";
 const LEGACY_CURRENT_INDEX_KEY = "irodori-studio-recorder-index-v1";
 const CURRENT_PROMPTS_KEY = "irodori-studio-recorder-prompts-v2";
 const CORPUS_STAGE_KEY = "irodori-studio-recorder-corpus-stage-v1";
-const DATASET_ID_KEY = "irodori-studio-recorder-dataset-v1";
 const DEVICE_ID_KEY = "irodori-studio-recorder-device-v1";
 
 function readPromptPositions() {
@@ -64,10 +63,10 @@ function readPromptPositions() {
 
 function nextDatasetName(datasets) {
   const names = new Set(datasets.map((dataset) => dataset.name));
-  if (!names.has("新しい録音データセット")) return "新しい録音データセット";
+  if (!names.has("新しい学習データセット")) return "新しい学習データセット";
   let number = 2;
-  while (names.has(`新しい録音データセット ${number}`)) number += 1;
-  return `新しい録音データセット ${number}`;
+  while (names.has(`新しい学習データセット ${number}`)) number += 1;
+  return `新しい学習データセット ${number}`;
 }
 
 function datasetSummary(recordings) {
@@ -144,6 +143,8 @@ export function RecorderWorkspace({
   onRecordingStateChange = () => {},
   playbackVolume = 80,
   outputDeviceId = "",
+  datasetId = "",
+  onDatasetIdChange = () => {},
 }) {
   const [corpusStageId, setCorpusStageId] = useState(() => getCorpusStage(localStorage.getItem(CORPUS_STAGE_KEY)).id);
   const activeStage = getCorpusStage(corpusStageId);
@@ -158,14 +159,13 @@ export function RecorderWorkspace({
     return corpus[0].id;
   });
   const [datasets, setDatasets] = useState([]);
-  const [activeDatasetId, setActiveDatasetId] = useState(() => localStorage.getItem(DATASET_ID_KEY) || "");
   const [recordings, setRecordings] = useState({});
   const [isLoaded, setIsLoaded] = useState(false);
   const [datasetBusy, setDatasetBusy] = useState(false);
   const [showCreateDataset, setShowCreateDataset] = useState(false);
   const [showRenameDataset, setShowRenameDataset] = useState(false);
   const [showDeleteDataset, setShowDeleteDataset] = useState(false);
-  const [newDatasetName, setNewDatasetName] = useState("新しい録音データセット");
+  const [newDatasetName, setNewDatasetName] = useState("新しい学習データセット");
   const [renameDatasetName, setRenameDatasetName] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -180,11 +180,13 @@ export function RecorderWorkspace({
   const engineRef = useRef(null);
   const timerRef = useRef(null);
   const audioRef = useRef(null);
+  const initialDatasetIdRef = useRef(datasetId);
   const deviceAccessRequestedRef = useRef(false);
   const deviceIdRef = useRef(deviceId);
   const currentIndex = Math.max(0, corpus.findIndex((item) => item.id === currentPromptId));
   const prompt = corpus[currentIndex];
   const currentRecording = recordings[prompt.id];
+  const activeDatasetId = datasetId;
   const activeDataset = datasets.find((dataset) => dataset.id === activeDatasetId) || null;
 
   const refreshDevices = useCallback(async ({ waitForLabels = false } = {}) => (
@@ -215,7 +217,7 @@ export function RecorderWorkspace({
     const initializeDatasets = async () => {
       try {
         let available = await listRecordingDatasets();
-        let selectedId = localStorage.getItem(DATASET_ID_KEY) || "";
+        let selectedId = initialDatasetIdRef.current;
         let migrationDatasetId = "";
         let migrationCommitted = false;
         try {
@@ -242,16 +244,15 @@ export function RecorderWorkspace({
           }
           setError("以前のブラウザー録音はそのまま残っています。Studioへの移行を完了できませんでした。");
         }
-        if (!available.some((dataset) => dataset.id === selectedId)) selectedId = available[0]?.id || "";
+        selectedId = resolveLearningDatasetId(available, selectedId);
         const selected = selectedId ? await loadRecordingDataset(selectedId) : null;
         if (cancelled) return;
         setDatasets(available);
-        setActiveDatasetId(selectedId);
+        onDatasetIdChange(selectedId);
         setRecordings(selected?.recordings || {});
         setNewDatasetName(nextDatasetName(available));
-        if (selectedId) localStorage.setItem(DATASET_ID_KEY, selectedId);
       } catch {
-        if (!cancelled) setError("Studioに保存した録音データセットを読み込めませんでした。");
+        if (!cancelled) setError("Studioに保存した学習データセットを読み込めませんでした。");
       } finally {
         if (!cancelled) setIsLoaded(true);
       }
@@ -259,7 +260,7 @@ export function RecorderWorkspace({
     initializeDatasets();
     refreshDevices().catch(() => {});
     return () => { cancelled = true; };
-  }, [notify, refreshDevices]);
+  }, [notify, onDatasetIdChange, refreshDevices]);
 
   useEffect(() => {
     if (!navigator.mediaDevices?.addEventListener) return undefined;
@@ -274,11 +275,6 @@ export function RecorderWorkspace({
     positions[corpusStageId] = currentPromptId;
     localStorage.setItem(CURRENT_PROMPTS_KEY, JSON.stringify(positions));
   }, [corpusStageId, currentPromptId]);
-
-  useEffect(() => {
-    if (activeDatasetId) localStorage.setItem(DATASET_ID_KEY, activeDatasetId);
-    else localStorage.removeItem(DATASET_ID_KEY);
-  }, [activeDatasetId]);
 
   useEffect(() => {
     deviceIdRef.current = deviceId;
@@ -325,8 +321,10 @@ export function RecorderWorkspace({
     onRecordingStateChange(false);
   }, [onRecordingStateChange]);
 
-  const acceptedPrompts = useMemo(() => selectAcceptedPrompts(corpus, recordings), [corpus, recordings]);
-  const acceptedCount = acceptedPrompts.length;
+  const acceptedCount = useMemo(
+    () => corpus.filter((prompt) => recordings[prompt.id]?.accepted === true).length,
+    [corpus, recordings],
+  );
   const reviewCount = corpus.filter((item) => recordings[item.id] && !recordings[item.id].accepted).length;
   const progressPercent = (acceptedCount / corpus.length) * 100;
   const hasDeviceLabels = devices.some((device) => device.label?.trim());
@@ -439,7 +437,7 @@ export function RecorderWorkspace({
   const startRecording = useCallback(async () => {
     setError("");
     if (!activeDatasetId) {
-      setError("録音するデータセットを作成してください。");
+      setError("収録先の学習データセットを作成してください。");
       return;
     }
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -592,14 +590,14 @@ export function RecorderWorkspace({
       audioRef.current?.pause();
       setIsPlaying(false);
       setLiveWave([]);
-      setActiveDatasetId(datasetId);
+      onDatasetIdChange(datasetId);
       setRecordings(selected.recordings);
     } catch {
-      setError("録音データセットを開けませんでした。");
+      setError("学習データセットを開けませんでした。");
     } finally {
       setDatasetBusy(false);
     }
-  }, [activeDatasetId, datasetBusy, isRecording]);
+  }, [activeDatasetId, datasetBusy, isRecording, onDatasetIdChange]);
 
   const createDataset = useCallback(async () => {
     if (!newDatasetName.trim() || datasetBusy) return;
@@ -610,7 +608,7 @@ export function RecorderWorkspace({
       const available = await listRecordingDatasets();
       audioRef.current?.pause();
       setDatasets(available);
-      setActiveDatasetId(created.id);
+      onDatasetIdChange(created.id);
       setRecordings({});
       setCurrentPromptId(corpus[0].id);
       setLiveWave([]);
@@ -619,17 +617,17 @@ export function RecorderWorkspace({
       setNewDatasetName(nextDatasetName(available));
       notify(`「${created.name}」を作成しました。`, "success");
     } catch (reason) {
-      setError(reason.message || "録音データセットを作成できませんでした。");
+      setError(reason.message || "学習データセットを作成できませんでした。");
     } finally {
       setDatasetBusy(false);
     }
-  }, [corpus, datasetBusy, newDatasetName, notify]);
+  }, [corpus, datasetBusy, newDatasetName, notify, onDatasetIdChange]);
 
   const deleteActiveDataset = useCallback(async () => {
     if (!activeDatasetId || datasetBusy || isRecording) return;
     setDatasetBusy(true);
     setError("");
-    const deletedName = activeDataset?.name || "録音データセット";
+    const deletedName = activeDataset?.name || "学習データセット";
     try {
       await deleteRecordingDataset(activeDatasetId);
       const available = await listRecordingDatasets();
@@ -637,7 +635,7 @@ export function RecorderWorkspace({
       const next = nextId ? await loadRecordingDataset(nextId) : null;
       audioRef.current?.pause();
       setDatasets(available);
-      setActiveDatasetId(nextId);
+      onDatasetIdChange(nextId);
       setRecordings(next?.recordings || {});
       setCurrentPromptId(corpus[0].id);
       setLiveWave([]);
@@ -646,11 +644,11 @@ export function RecorderWorkspace({
       setNewDatasetName(nextDatasetName(available));
       notify(`「${deletedName}」を削除しました。`, "success");
     } catch (reason) {
-      setError(reason.message || "録音データセットを削除できませんでした。");
+      setError(reason.message || "学習データセットを削除できませんでした。");
     } finally {
       setDatasetBusy(false);
     }
-  }, [activeDataset?.name, activeDatasetId, corpus, datasetBusy, isRecording, notify]);
+  }, [activeDataset?.name, activeDatasetId, corpus, datasetBusy, isRecording, notify, onDatasetIdChange]);
 
   const renameActiveDataset = useCallback(async () => {
     const name = renameDatasetName.trim();
@@ -663,9 +661,9 @@ export function RecorderWorkspace({
       setDatasets(available);
       setShowRenameDataset(false);
       setNewDatasetName(nextDatasetName(available));
-      notify(`録音データセット名を「${renamed.name}」へ変更しました。`, "success");
+      notify(`学習データセット名を「${renamed.name}」へ変更しました。`, "success");
     } catch (reason) {
-      setError(reason.message || "録音データセット名を変更できませんでした。");
+      setError(reason.message || "学習データセット名を変更できませんでした。");
     } finally {
       setDatasetBusy(false);
     }
@@ -715,7 +713,7 @@ export function RecorderWorkspace({
           </button>
         ))}
       </div>
-      <div className="recorder-autosave-status"><Database size={17} /><span><strong>{activeDataset?.name || "録音先がありません"}</strong><small>{activeDataset ? "採用済み音声はトレーニングから選択できます" : "データセットを作成すると録音できます"}</small></span></div>
+      <div className="recorder-autosave-status"><Database size={17} /><span><strong>{activeDataset?.name || "録音先がありません"}</strong><small>{activeDataset ? "採用済み音声は学習から選択できます" : "データセットを作成すると録音できます"}</small></span></div>
     </aside>
   );
 
@@ -743,14 +741,14 @@ export function RecorderWorkspace({
             <div className="recorder-dataset-bar">
               <label className="recorder-dataset-select">
                 <Database size={21} />
-                <span><small>録音データセット</small><select value={activeDatasetId} onChange={switchDataset} disabled={isRecording || datasetBusy} aria-label="録音データセット">
+                <span><small>収録先データセット</small><select value={activeDatasetId} onChange={switchDataset} disabled={isRecording || datasetBusy} aria-label="収録先の学習データセット">
                   {!datasets.length && <option value="">データセットを作成してください</option>}
                   {datasets.map((dataset) => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.accepted}件採用</option>)}
                 </select></span>
               </label>
-              <IconButton label="録音データセットを作成" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }} disabled={isRecording || datasetBusy}><Plus size={19} /></IconButton>
-              <IconButton label="録音データセット名を変更" onClick={() => { setError(""); setRenameDatasetName(activeDataset?.name || ""); setShowRenameDataset(true); }} disabled={!activeDatasetId || isRecording || datasetBusy}><PencilSimple size={19} /></IconButton>
-              <IconButton label="録音データセットを削除" tone="danger" onClick={() => setShowDeleteDataset(true)} disabled={!activeDatasetId || isRecording || datasetBusy}><Trash size={19} /></IconButton>
+              <IconButton label="学習データセットを作成" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }} disabled={isRecording || datasetBusy}><Plus size={19} /></IconButton>
+              <IconButton label="学習データセット名を変更" onClick={() => { setError(""); setRenameDatasetName(activeDataset?.name || ""); setShowRenameDataset(true); }} disabled={!activeDatasetId || isRecording || datasetBusy}><PencilSimple size={19} /></IconButton>
+              <IconButton label="学習データセットを削除" tone="danger" onClick={() => setShowDeleteDataset(true)} disabled={!activeDatasetId || isRecording || datasetBusy}><Trash size={19} /></IconButton>
             </div>
             <div className="recorder-studio-meta">
               <label className="recorder-corpus-switcher">
@@ -766,8 +764,8 @@ export function RecorderWorkspace({
               </div>
             </div>
 
-            {!activeDatasetId && <div className="recorder-dataset-required"><Database size={22} /><span><strong>録音データセットを作成してください。</strong> 音声はStudioへ自動保存され、トレーニングからそのまま選択できます。</span><button className="primary-button" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }}>作成</button></div>}
-            {acceptedCount === corpus.length && <div className="recorder-complete"><CheckCircle size={21} /><span><strong>すべて録音できました。</strong> このデータセットはトレーニングから選択できます。</span></div>}
+            {!activeDatasetId && <div className="recorder-dataset-required"><Database size={22} /><span><strong>収録先の学習データセットを作成してください。</strong> 音声はStudioへ自動保存され、学習からそのまま選択できます。</span><button className="primary-button" onClick={() => { setError(""); setNewDatasetName(nextDatasetName(datasets)); setShowCreateDataset(true); }}>作成</button></div>}
+            {acceptedCount === corpus.length && <div className="recorder-complete"><CheckCircle size={21} /><span><strong>すべて録音できました。</strong> このデータセットは学習から選択できます。</span></div>}
 
             <article className={`recorder-reading-card emotion-${prompt.emotion}`}>
               <div className="recorder-reading-eyebrow"><span>READING {String(currentIndex + 1).padStart(3, "0")}</span><div><span>{emotionLabels[prompt.emotion] || prompt.emotion}</span><span>{intensityLabels[prompt.intensity] || prompt.intensity}</span></div></div>
@@ -809,11 +807,11 @@ export function RecorderWorkspace({
         <p className="resource-dialog-description">録音は48 kHz・モノラル・PCM 16-bit WAVへ変換し、選択中のデータセットへ自動保存します。</p>
         <label><span>使用するマイク</span><select value={deviceId} onChange={(event) => setDeviceId(event.target.value)} disabled={isRecording}><option value="">{hasDeviceLabels ? "既定のマイク" : "マイクの許可が必要"}</option>{devices.filter((device) => device.label?.trim()).map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}</select></label>
         {microphonePermission === "denied" && <button className="secondary-button" onClick={requestMicrophoneAccess}><Microphone size={18} />マイクを許可</button>}
-        <div className="recorder-privacy"><ShieldCheck size={20} /><span><strong>このPCだけで処理</strong>録音は外部へ送信せず、Studioの録音データセットへ保存します。</span></div>
+        <div className="recorder-privacy"><ShieldCheck size={20} /><span><strong>このPCだけで処理</strong>録音は外部へ送信せず、Studioの学習データセットへ保存します。</span></div>
       </section></Modal>}
 
       {showCreateDataset && <NameDialog
-        title="録音データセットを作成"
+        title="学習データセットを作成"
         eyebrow="RECORDING DATASET"
         description="話者や収録セッションが分かる名前を付けてください。録音はこのデータセットへ自動保存されます。"
         label="データセット名"
@@ -828,7 +826,7 @@ export function RecorderWorkspace({
       />}
 
       {showRenameDataset && <NameDialog
-        title="録音データセット名を変更"
+        title="学習データセット名を変更"
         eyebrow="RECORDING DATASET"
         description="Studioの表示名とworkspace内の保存フォルダ名を一緒に変更します。録音や学習との紐付けは維持されます。"
         label="データセット名"

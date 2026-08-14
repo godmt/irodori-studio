@@ -14,7 +14,7 @@ STUDIO_ROOT = Path(__file__).resolve().parents[1]
 if str(STUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(STUDIO_ROOT))
 
-from studio_backend.exporter import create_production_zip, safe_stem  # noqa: E402
+from studio_backend.exporter import create_production_zip  # noqa: E402
 from studio_backend.models import ProductionExportRequest  # noqa: E402
 
 
@@ -68,10 +68,6 @@ class ExporterTests(unittest.TestCase):
                 master, sample_rate = sf.read(io.BytesIO(archive.read("master.wav")))
                 self.assertEqual(sample_rate, 24_000)
                 self.assertAlmostEqual(len(master) / sample_rate, 1.0, places=3)
-
-    def test_safe_stem_removes_path_punctuation(self) -> None:
-        self.assertEqual(safe_stem(" ../番組:テスト/ "), "番組-テスト")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,10 +34,6 @@ export function readLegacyRecordings() {
   return runRequest("readonly", (store) => store.getAll());
 }
 
-export function writeLegacyRecording(recording) {
-  return runRequest("readwrite", (store) => store.put(recording));
-}
-
 export function clearLegacyRecordings() {
   return runRequest("readwrite", (store) => store.clear());
 }

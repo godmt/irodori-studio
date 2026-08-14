@@ -40,18 +40,22 @@ from irodori_tts.inference_runtime import (
     list_available_runtime_precisions,
 )
 
+from studio_backend.audio_import_jobs import AudioImportJobManager
 from studio_backend.engine import StudioEngine
 from studio_backend.exporter import create_production_zip
 from studio_backend.generated_audio import delete_generated_audio_files
 from studio_backend.models import (
+    AudioImportJobCreateRequest,
     AudioReleaseRequest,
     DialogRequest,
+    JobResumeRequest,
     ModelLoadRequest,
     ProductionExportRequest,
     ProjectRenameRequest,
     ProjectSaveRequest,
     RecordingDatasetCreateRequest,
     RecordingDatasetRenameRequest,
+    RecordingReviewRequest,
     SynthesisPayload,
     TrainedModelRenameRequest,
     TrainingJobCreateRequest,
@@ -89,14 +93,18 @@ migrate_voice_profile_store(VOICEVOX_DIR / "profiles.json", VOICE_DIR / "profile
 engine = StudioEngine(audio_dir=AUDIO_DIR)
 project_store = ProjectStore(PROJECT_DIR)
 recording_dataset_store = RecordingDatasetStore(RECORDING_DIR)
+audio_import_job_manager = AudioImportJobManager(
+    workspace=WORKSPACE,
+    recording_store=recording_dataset_store,
+)
 voice_profile_store = VoiceProfileStore(VOICE_DIR / "profiles.json")
-voicevox_app = create_voicevox_app(engine=engine, profile_store=voice_profile_store)
 voicevox_runtime: dict[str, Any] = {
     "enabled": True,
     "host": "127.0.0.1",
     "port": 50021,
 }
-app = FastAPI(title="Irodori Studio Local API", version="0.1.0")
+gpu_job_launch_lock = threading.RLock()
+app = FastAPI(title="Irodori Studio Local API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -191,6 +199,7 @@ def bootstrap() -> dict[str, Any]:
         "model": engine.status(),
         "voice_profiles": voice_profile_store.list(),
         "recording_datasets": recording_dataset_store.list(),
+        "audio_import_jobs": audio_import_job_manager.list(),
         "training_jobs": training_job_manager.list(),
         "trained_models": training_job_manager.models(),
         "training_paths": training_job_manager.paths(),
@@ -426,12 +435,85 @@ def get_dataset_recording_audio(dataset_id: str, prompt_id: str) -> FileResponse
     return FileResponse(path, media_type="audio/wav", filename=path.name)
 
 
+@app.post("/api/recording-datasets/{dataset_id}/recordings/{prompt_id}/review")
+def review_dataset_recording(
+    dataset_id: str,
+    prompt_id: str,
+    request: RecordingReviewRequest,
+) -> dict[str, Any]:
+    try:
+        return recording_dataset_store.update_recording_review(
+            dataset_id,
+            prompt_id,
+            text=request.text,
+            accepted=request.accepted,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音音声が見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.delete("/api/recording-datasets/{dataset_id}")
 def delete_recording_dataset(dataset_id: str) -> dict[str, bool]:
     try:
+        if audio_import_job_manager.active_for_dataset(dataset_id):
+            raise ValueError("前処理中の録音データセットは削除できません")
         recording_dataset_store.delete(dataset_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
+@app.get("/api/audio-import-jobs")
+def list_audio_import_jobs() -> list[dict[str, Any]]:
+    return audio_import_job_manager.list()
+
+
+@app.post("/api/audio-import-jobs", status_code=202)
+def create_audio_import_job(request: AudioImportJobCreateRequest) -> dict[str, Any]:
+    try:
+        with gpu_job_launch_lock:
+            if any(
+                job.get("status") in {"queued", "preparing", "training", "cancelling"}
+                for job in training_job_manager.list()
+            ):
+                raise ValueError("学習の実行中は音声の前処理を開始できません")
+            if engine.status().get("loaded"):
+                engine.unload_model()
+            return audio_import_job_manager.create(request)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/audio-import-jobs/{job_id}")
+def load_audio_import_job(job_id: str) -> dict[str, Any]:
+    try:
+        return audio_import_job_manager.load(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="音声前処理ジョブが見つかりません") from exc
+
+
+@app.post("/api/audio-import-jobs/{job_id}/cancel")
+def cancel_audio_import_job(job_id: str) -> dict[str, Any]:
+    try:
+        return audio_import_job_manager.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="音声前処理ジョブが見つかりません") from exc
+
+
+@app.delete("/api/audio-import-jobs/{job_id}")
+def delete_audio_import_job(job_id: str) -> dict[str, bool]:
+    try:
+        audio_import_job_manager.delete(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="音声前処理ジョブが見つかりません") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"deleted": True}
 
 
@@ -493,12 +575,15 @@ def delete_trained_model(model_id: str) -> dict[str, bool]:
 @app.post("/api/training-jobs", status_code=202)
 def create_training_job(request: TrainingJobCreateRequest) -> dict[str, Any]:
     try:
-        dataset = recording_dataset_store.load(request.dataset_id)
-        if int(dataset.get("accepted") or 0) <= 0:
-            raise ValueError("採用済みの録音がないため学習を開始できません")
-        if engine.status().get("loaded"):
-            engine.unload_model()
-        return training_job_manager.create(request)
+        with gpu_job_launch_lock:
+            if audio_import_job_manager.has_active_job():
+                raise ValueError("音声の前処理が完了してから学習を開始してください")
+            dataset = recording_dataset_store.load(request.dataset_id)
+            if int(dataset.get("accepted") or 0) <= 0:
+                raise ValueError("採用済みの録音がないため学習を開始できません")
+            if engine.status().get("loaded"):
+                engine.unload_model()
+            return training_job_manager.create(request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
     except (ValueError, FileNotFoundError) as exc:
@@ -519,6 +604,25 @@ def cancel_training_job(job_id: str) -> dict[str, Any]:
         return training_job_manager.cancel(job_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="学習ジョブが見つかりません") from exc
+
+
+@app.post("/api/training-jobs/{job_id}/resume", status_code=202)
+def resume_training_job(
+    job_id: str, request: JobResumeRequest
+) -> dict[str, Any]:
+    try:
+        with gpu_job_launch_lock:
+            if audio_import_job_manager.has_active_job():
+                raise ValueError("音声の前処理が完了してから学習を再開してください")
+            if engine.status().get("loaded"):
+                engine.unload_model()
+            return training_job_manager.resume(
+                job_id, overwrite_existing=request.overwrite_existing
+            )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="学習ジョブが見つかりません") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.delete("/api/training-jobs/{job_id}")

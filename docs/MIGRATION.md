@@ -11,7 +11,7 @@ The extraction preserved:
 - Voice profiles with stable VOICEVOX IDs
 - Production exporter and API compatibility tests
 - Product decisions in `AGENTS.md`
-- Gradio/Studio feature comparison and future integration roadmap
+- Repository boundary documentation and an implementation-status roadmap
 
 The local migration also copied the ignored `workspace/` data so previously generated WAV files, saved projects, exports and server-side voice profiles continue to work. Those files are intentionally not part of Git history.
 
@@ -31,4 +31,4 @@ These remain external or ignored. Studio discovers model and training assets fro
 
 Continue Studio changes in this repository. Changes to model architecture, inference primitives, Speaker Inversion or LoRA training belong upstream in Irodori-TTS. When work crosses the boundary, implement a narrow adapter in Studio and document the minimum compatible Irodori-TTS revision.
 
-Recorder is now a top-level workspace implemented under `src/features/recorder` without changing project hydration or Voice Library persistence. Training is the next planned workspace; see `ROADMAP.md` before adding its orchestration and keep the external Irodori-TTS repository boundary intact.
+Recorder and Training are now top-level workspaces implemented under `src/features/recorder` and `src/features/training`. Their server-owned persistence and orchestration live in `studio_backend/recording_datasets.py`, `studio_backend/dataset_preprocessing.py`, and `studio_backend/training_jobs.py`. Dataset preprocessing is method-independent and happens when audio enters the dataset; Training snapshots those canonical files and owns only model-specific preparation. Keep the external Irodori-TTS repository boundary intact; current implementation status and remaining candidates are recorded in `ROADMAP.md`.

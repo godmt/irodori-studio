@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import re
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -12,7 +11,9 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from studio_backend.audio_utils import read_mono_audio, resample_linear
 from studio_backend.models import ProductionExportRequest
+from studio_backend.path_utils import safe_stem
 
 
 @dataclass(frozen=True)
@@ -29,12 +30,6 @@ class TimelineEntry:
     duration: float
 
 
-def safe_stem(value: str, fallback: str = "irodori-project") -> str:
-    cleaned = re.sub(r"[^0-9A-Za-zぁ-んァ-ヶ一-龠々ー_-]+", "-", value.strip())
-    cleaned = cleaned.strip("-_.")
-    return cleaned[:80] or fallback
-
-
 def _timecode(seconds: float, *, srt: bool) -> str:
     total_ms = max(0, round(float(seconds) * 1000))
     hours, remainder = divmod(total_ms, 3_600_000)
@@ -42,21 +37,6 @@ def _timecode(seconds: float, *, srt: bool) -> str:
     whole_seconds, millis = divmod(remainder, 1000)
     separator = "," if srt else "."
     return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}{separator}{millis:03d}"
-
-
-def _read_mono(path: Path) -> tuple[np.ndarray, int]:
-    audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
-    mono = audio.mean(axis=1)
-    return mono, int(sample_rate)
-
-
-def _resample_linear(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-    if source_rate == target_rate or len(audio) == 0:
-        return audio
-    target_length = max(1, round(len(audio) * target_rate / source_rate))
-    source_x = np.linspace(0.0, 1.0, num=len(audio), endpoint=False)
-    target_x = np.linspace(0.0, 1.0, num=target_length, endpoint=False)
-    return np.interp(target_x, source_x, audio).astype(np.float32)
 
 
 def _build_srt(entries: list[TimelineEntry]) -> str:
@@ -100,7 +80,7 @@ def create_production_zip(
         candidate = (audio_dir / Path(segment.audio_file).name).resolve()
         if candidate.parent != audio_dir or not candidate.is_file():
             raise FileNotFoundError(f"Generated audio not found: {segment.audio_file}")
-        audio, sample_rate = _read_mono(candidate)
+        audio, sample_rate = read_mono_audio(candidate)
         loaded.append((segment, candidate, audio, sample_rate))
 
     target_rate = loaded[0][3]
@@ -112,7 +92,7 @@ def create_production_zip(
     line_files: list[tuple[Path, str]] = []
 
     for index, (segment, source_path, audio, sample_rate) in enumerate(loaded, start=1):
-        audio = _resample_linear(audio, sample_rate, target_rate)
+        audio = resample_linear(audio, sample_rate, target_rate)
         duration = len(audio) / target_rate
         audio_name = f"{index:03d}_{safe_stem(segment.id, f'line-{index}')}.wav"
         entries.append(

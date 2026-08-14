@@ -4,15 +4,11 @@ import json
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from studio_backend.models import VoiceProfileRequest
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from studio_backend.time_utils import utc_now
 
 
 def migrate_voice_profile_store(legacy_path: Path, current_path: Path) -> bool:

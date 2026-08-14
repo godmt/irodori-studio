@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from studio_backend.exporter import safe_stem
+from studio_backend.path_utils import safe_stem
 
 
 def project_audio_files(project: dict[str, Any] | None) -> set[str]:

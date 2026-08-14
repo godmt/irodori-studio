@@ -161,23 +161,10 @@ export function hydrateProject(raw) {
   };
 }
 
-export function moveItem(items, from, to) {
-  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return items;
-  const next = [...items];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
-}
-
 export function formatDuration(value) {
   if (!Number.isFinite(Number(value))) return "—";
   const seconds = Number(value);
   if (seconds < 60) return `${seconds.toFixed(1)}秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}分${Math.round(seconds % 60)}秒`;
-}
-
-export function qualityForSteps(steps) {
-  const match = Object.entries(QUALITY_PRESETS).find(([, preset]) => preset.numSteps === Number(steps));
-  return match?.[0] || "custom";
 }

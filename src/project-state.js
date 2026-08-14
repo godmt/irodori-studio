@@ -1,4 +1,4 @@
-import { createLine, createTake, moveItem } from "./defaults.js";
+import { createLine, createTake } from "./defaults.js";
 
 export const MAX_LINE_TAKES = 4;
 
@@ -96,11 +96,6 @@ export function duplicateLine(lines, id) {
     stale: false,
   });
   return [...lines.slice(0, index + 1), copy, ...lines.slice(index + 1)];
-}
-
-export function reorderLine(lines, id, direction) {
-  const index = lines.findIndex((line) => line.id === id);
-  return moveItem(lines, index, index + direction);
 }
 
 export function estimatedProjectSeconds(lines) {

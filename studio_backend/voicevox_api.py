@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
+from studio_backend.audio_utils import read_mono_audio, resample_linear
 from studio_backend.models import SynthesisPayload
 from studio_backend.voice_profiles import VoiceProfileStore
 
@@ -66,23 +67,13 @@ def _audio_query(text: str) -> AudioQuery:
     )
 
 
-def _resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-    if source_rate == target_rate or audio.size == 0:
-        return audio
-    target_length = max(1, round(audio.shape[0] * target_rate / source_rate))
-    source_x = np.linspace(0.0, 1.0, num=audio.shape[0], endpoint=False)
-    target_x = np.linspace(0.0, 1.0, num=target_length, endpoint=False)
-    return np.interp(target_x, source_x, audio).astype(np.float32)
-
-
 def _render_wav(path: Path, query: AudioQuery) -> bytes:
-    audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
-    mono = audio.mean(axis=1)
+    mono, sample_rate = read_mono_audio(path)
     mono = np.clip(mono * max(0.0, min(float(query.volumeScale), 4.0)), -1.0, 1.0)
     target_rate = int(query.outputSamplingRate or 48_000)
     if target_rate < 8_000 or target_rate > 192_000:
         raise ValueError("outputSamplingRate must be between 8000 and 192000")
-    mono = _resample(mono, sample_rate, target_rate)
+    mono = resample_linear(mono, sample_rate, target_rate)
     pre = np.zeros(round(max(0.0, min(query.prePhonemeLength, 10.0)) * target_rate))
     post = np.zeros(round(max(0.0, min(query.postPhonemeLength, 10.0)) * target_rate))
     mono = np.concatenate([pre, mono, post]).astype(np.float32)

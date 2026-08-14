@@ -7,6 +7,7 @@ import time
 import unittest
 import wave
 from array import array
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,75 +15,18 @@ STUDIO_ROOT = Path(__file__).resolve().parents[1]
 if str(STUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(STUDIO_ROOT))
 
-from studio_backend.audio_preprocessing import trim_wav_edge_silence  # noqa: E402
 from studio_backend.recording_datasets import RecordingDatasetStore  # noqa: E402
 from studio_backend.training_jobs import TrainingJobManager  # noqa: E402
 
 
 def empty_wav() -> bytes:
-    return (
-        b"RIFF"
-        + (36).to_bytes(4, "little")
-        + b"WAVEfmt "
-        + (16).to_bytes(4, "little")
-        + (1).to_bytes(2, "little")
-        + (1).to_bytes(2, "little")
-        + (48_000).to_bytes(4, "little")
-        + (96_000).to_bytes(4, "little")
-        + (2).to_bytes(2, "little")
-        + (16).to_bytes(2, "little")
-        + b"data"
-        + (0).to_bytes(4, "little")
-    )
-
-
-def write_pcm16_wav(path: Path, samples: list[int], sample_rate: int = 1000) -> None:
-    with wave.open(str(path), "wb") as writer:
+    output = BytesIO()
+    with wave.open(output, "wb") as writer:
         writer.setnchannels(1)
         writer.setsampwidth(2)
-        writer.setframerate(sample_rate)
-        writer.writeframes(array("h", samples).tobytes())
-
-
-class AudioPreprocessingTests(unittest.TestCase):
-    def test_only_edge_silence_is_trimmed_with_padding(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "source.wav"
-            target = root / "prepared.wav"
-            source_samples = (
-                [0] * 300
-                + [6000] * 200
-                + [0] * 200
-                + [-6000] * 200
-                + [0] * 300
-            )
-            write_pcm16_wav(source, source_samples)
-            original_bytes = source.read_bytes()
-
-            result = trim_wav_edge_silence(source, target, padding_ms=100)
-
-            with wave.open(str(target), "rb") as reader:
-                processed = array("h")
-                processed.frombytes(reader.readframes(reader.getnframes()))
-            self.assertEqual(result["status"], "trimmed")
-            self.assertAlmostEqual(result["trimmed_start_seconds"], 0.2)
-            self.assertAlmostEqual(result["trimmed_end_seconds"], 0.2)
-            self.assertEqual(len(processed), 800)
-            self.assertTrue(all(sample == 0 for sample in processed[300:500]))
-            self.assertEqual(source.read_bytes(), original_bytes)
-
-    def test_silent_recording_is_copied_without_destructive_trimming(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / "source.wav"
-            target = root / "prepared.wav"
-            write_pcm16_wav(source, [0] * 1000)
-
-            result = trim_wav_edge_silence(source, target)
-
-            self.assertEqual(result["status"], "no_activity")
-            self.assertEqual(target.read_bytes(), source.read_bytes())
+        writer.setframerate(48_000)
+        writer.writeframes(array("h", [0] * 4_800).tobytes())
+    return output.getvalue()
 
 
 class TrainingJobManagerTests(unittest.TestCase):
@@ -100,6 +44,9 @@ class TrainingJobManagerTests(unittest.TestCase):
 import sys
 args = sys.argv[1:]
 target = Path(args[args.index('--output-manifest') + 1])
+latent_dir = Path(args[args.index('--latent-dir') + 1])
+latent_dir.mkdir(parents=True, exist_ok=True)
+(latent_dir / 'test.pt').write_bytes(b'latent')
 target.write_text('{\"text\":\"test\",\"latent_path\":\"latents/test.pt\"}\\n', encoding='utf-8')
 print('prepared 1 sample', flush=True)
 """,
@@ -111,6 +58,7 @@ import sys
 args = sys.argv[1:]
 target = Path(args[args.index('--output-dir') + 1])
 target.mkdir(parents=True, exist_ok=True)
+(target / 'checkpoint_0000001.speaker.safetensors').write_bytes(b'partial')
 (target / 'checkpoint_final.speaker.safetensors').write_bytes(b'test')
 print('step=1 loss=0.5', flush=True)
 """,
@@ -143,15 +91,16 @@ print('step=1 loss=0.5', flush=True)
             job_directory = manager.training_directory / "job0001"
             job_directory.mkdir()
 
-            preprocessing = manager._dataset_rows(dataset_id, job_directory)
+            snapshot = manager._snapshot_dataset_rows(dataset_id, job_directory)
             source = json.loads((job_directory / "source-dataset.jsonl").read_text(encoding="utf-8"))
 
-            self.assertEqual(preprocessing["files"], 1)
-            self.assertEqual(preprocessing["loudness_target_db"], -16.0)
-            self.assertFalse(preprocessing["source_recordings_modified"])
+            self.assertEqual(snapshot["files"], 1)
+            self.assertEqual(snapshot["pipeline_version"], 1)
+            self.assertFalse(snapshot["transformations_applied"])
+            self.assertFalse(snapshot["source_dataset_modified"])
             self.assertEqual(source["text"], "テスト音声です。")
             self.assertTrue(Path(source["audio"]).is_absolute())
-            self.assertEqual(Path(source["audio"]).parent.name, "prepared-audio")
+            self.assertEqual(Path(source["audio"]).parent.name, "dataset-snapshot")
             self.assertEqual(
                 manager.paths()["speaker_embeddings"],
                 "workspace/models/speaker-embeddings",
@@ -267,8 +216,167 @@ print('step=1 loss=0.5', flush=True)
 
             self.assertEqual(job["status"], "completed")
             self.assertTrue(Path(job["asset_path"]).is_file())
-            self.assertEqual(job["preprocessing"]["loudness_target_db"], -16.0)
+            self.assertEqual(job["dataset_snapshot"]["pipeline_version"], 1)
+            self.assertFalse(job["dataset_snapshot"]["transformations_applied"])
+            prepare_command = manager._read(created["id"])["command"][0]
+            self.assertEqual(prepare_command[prepare_command.index("--normalize-db") + 1], "none")
             self.assertEqual(manager.models()[0]["name"], "話者A ナレーション")
+
+    def test_empty_irodori_manifest_stops_before_training_with_visible_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager, recordings = self.create_manager(root)
+            (manager.irodori_root / "prepare_manifest.py").write_text(
+                """from pathlib import Path
+import sys
+args = sys.argv[1:]
+target = Path(args[args.index('--output-manifest') + 1])
+target.write_text('', encoding='utf-8')
+print('done. seen=1 written=0 skipped_audio=1')
+print('  dataset_iter_error: 1')
+""",
+                encoding="utf-8",
+            )
+            dataset_id = recordings.create("話者A")["id"]
+            recordings.save_recording(
+                dataset_id,
+                "irodori_0001",
+                empty_wav(),
+                {
+                    "duration": 0.1,
+                    "accepted": True,
+                    "prompt": {"text": "テスト音声です。"},
+                },
+            )
+            request = SimpleNamespace(
+                name="失敗原因テスト",
+                dataset_id=dataset_id,
+                method="speaker_inversion",
+                checkpoint="base.safetensors",
+                device="cpu",
+                precision="fp32",
+                max_steps=1,
+            )
+
+            created = manager.create(request)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                job = manager.load(created["id"])
+                if job["status"] not in {"queued", "preparing", "training"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(job["status"], "failed")
+            self.assertEqual(job["failure"]["code"], "manifest_empty")
+            self.assertIn("1件", job["failure"]["summary"])
+            self.assertIn("dataset_iter_error", job["failure"]["details"])
+            listed = next(item for item in manager.list() if item["id"] == job["id"])
+            self.assertNotIn("details", listed["failure"])
+            self.assertFalse(Path(job["output_path"]).exists())
+
+    def test_interrupted_speaker_training_reuses_files_and_warm_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager, recordings = self.create_manager(root)
+            dataset_id = recordings.create("話者A")["id"]
+            recordings.save_recording(
+                dataset_id,
+                "irodori_0001",
+                empty_wav(),
+                {
+                    "duration": 2.0,
+                    "accepted": True,
+                    "prompt": {"text": "再開する音声です。", "direction": "自然に"},
+                },
+            )
+            request = SimpleNamespace(
+                name="再開モデル",
+                dataset_id=dataset_id,
+                method="speaker_inversion",
+                checkpoint="base.safetensors",
+                device="cpu",
+                precision="fp32",
+                max_steps=1,
+            )
+            created = manager.create(request)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                job = manager.load(created["id"])
+                if job["status"] not in {"queued", "preparing", "training"}:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(job["status"], "completed")
+            output = Path(job["output_path"])
+            (output / "checkpoint_final.speaker.safetensors").unlink()
+            (output / "studio-model.json").unlink()
+            interrupted = manager._read(created["id"])
+            interrupted.update(status="interrupted", stage="interrupted", asset_path=None)
+            manager._write(interrupted)
+
+            resumed = manager.resume(created["id"])
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                resumed = manager.load(created["id"])
+                if resumed["status"] not in {"queued", "preparing", "training"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(resumed["status"], "completed")
+            self.assertTrue(resumed["manifest_reused"])
+            command = manager._read(created["id"])["command"][1]
+            self.assertIn("--speaker-inversion-init-embedding", command)
+            self.assertIn("resume-runs", resumed["asset_path"])
+
+    def test_resume_overwrite_removes_old_generated_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager, recordings = self.create_manager(root)
+            dataset_id = recordings.create("話者A")["id"]
+            recordings.save_recording(
+                dataset_id,
+                "irodori_0001",
+                empty_wav(),
+                {
+                    "duration": 2.0,
+                    "accepted": True,
+                    "prompt": {"text": "最初から行います。"},
+                },
+            )
+            request = SimpleNamespace(
+                name="上書きモデル",
+                dataset_id=dataset_id,
+                method="speaker_inversion",
+                checkpoint="base.safetensors",
+                device="cpu",
+                precision="fp32",
+                max_steps=1,
+            )
+            created = manager.create(request)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                job = manager.load(created["id"])
+                if job["status"] not in {"queued", "preparing", "training"}:
+                    break
+                time.sleep(0.05)
+            failed = manager._read(created["id"])
+            failed.update(status="failed", stage="failed", asset_path=None)
+            manager._write(failed)
+            sentinel = manager._job_directory(created["id"]) / "dataset-snapshot" / "stale.wav"
+            sentinel.write_bytes(b"stale")
+
+            manager.resume(created["id"], overwrite_existing=True)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                resumed = manager.load(created["id"])
+                if resumed["status"] not in {"queued", "preparing", "training"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(resumed["status"], "completed")
+            self.assertEqual(resumed["resume_mode"], "overwrite")
+            self.assertFalse(sentinel.exists())
+            command = manager._read(created["id"])["command"][1]
+            self.assertNotIn("--speaker-inversion-init-embedding", command)
 
 
 if __name__ == "__main__":

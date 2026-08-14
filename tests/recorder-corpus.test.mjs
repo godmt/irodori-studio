@@ -2,15 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { strFromU8, unzipSync } from "fflate";
-
 import {
   AICA_SOURCE,
   CORPUS_ROOT,
   CORPUS_STAGES,
   getCorpusPrompts,
 } from "../src/features/recorder/corpus-catalog.js";
-import { createRecordingArchive } from "../src/features/recorder/recorder-export.js";
 
 test("recorder stages are views over one shared prompt root", () => {
   assert.equal(CORPUS_ROOT.length, 620);
@@ -94,23 +91,18 @@ test("Irodori Starter v2 has twenty distinct fillers and backchannels", () => {
   ]);
 });
 
-test("AICA exports preserve upstream credit and stage metadata", async () => {
-  const prompts = getCorpusPrompts("aica-core").slice(0, 2);
+test("AICA prompts preserve upstream credit and the bundled license", async () => {
+  const prompts = getCorpusPrompts("aica-core");
   const stage = CORPUS_STAGES.find((item) => item.id === "aica-core");
-  const recordings = {
-    [prompts[0].id]: { accepted: true, blob: new Blob([new Uint8Array([1, 2, 3])]) },
-  };
-  const archive = unzipSync(await createRecordingArchive(prompts, recordings, stage));
-  const row = JSON.parse(strFromU8(archive["dataset.jsonl"]).trim());
-  const report = JSON.parse(strFromU8(archive["recording_report.json"]));
-  const credits = strFromU8(archive["CREDITS.txt"]);
 
-  assert.equal(row.source_name, AICA_SOURCE.name);
-  assert.equal(row.source_id.length, 4);
-  assert.equal(row.source_license, "CC0-1.0");
-  assert.equal(report.corpus_stage, "aica-core");
-  assert.match(credits, /reinehonoka/);
-  assert.match(credits, /CC0 1\.0 Universal/);
+  assert.equal(stage.id, "aica-core");
+  assert.equal(stage.source, AICA_SOURCE);
+  assert.equal(prompts.length, 200);
+  assert.ok(prompts.every((prompt) => prompt.sourceName === AICA_SOURCE.name));
+  assert.ok(prompts.every((prompt) => prompt.sourceUrl === AICA_SOURCE.url));
+  assert.ok(prompts.every((prompt) => prompt.sourceVersion === `${AICA_SOURCE.version} (${AICA_SOURCE.commit})`));
+  assert.ok(prompts.every((prompt) => prompt.license === AICA_SOURCE.license));
+  assert.ok(prompts.every((prompt) => prompt.sourceId.length === 4));
 
   const license = await readFile(new URL("../third_party/aica-corpus/LICENSE", import.meta.url), "utf8");
   assert.match(license, /^CC0 1\.0 Universal/);

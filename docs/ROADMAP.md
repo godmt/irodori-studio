@@ -1,61 +1,61 @@
-# Product roadmap
+# Implementation status and roadmap
 
-Irodori Studio is intended to become a local end-to-end environment with three primary workspaces.
+この文書は、現行コードと自動テストから確認できる実装状況をまとめます。将来候補は製品仕様ではなく、実装時に改めて優先度とUXを判断するバックログです。
 
-## Production — implemented
+## 現在のワークスペース
 
-- Script editing and line ordering
-- Multiple takes and adopted-take selection
-- Voice library and synthesis controls
-- Continuous playback and production export
-- Live queue and VOICEVOX-compatible external integration
+Irodori Studioには4つのトップレベルワークスペースがあります。
 
-## Recorder — implemented
+| ワークスペース | 実装 | 主なコード |
+| --- | --- | --- |
+| 台本制作 | プロジェクト、行・テイク・ボイス管理、連続再生、制作パッケージ書き出し | `src/App.jsx`、`src/project-state.js`、`studio_backend/project_store.py`、`studio_backend/exporter.py` |
+| 配信 | FIFO生成、自動再生、中断、履歴、台本制作と共通の音量・出力先・ボイス | `src/App.jsx`、`studio_backend/engine.py` |
+| 録音 | 3段階コーパス、録音・確認・採用、名前付きデータセット | `src/features/recorder/`、`studio_backend/recording_datasets.py` |
+| 長尺音声前処理 | 複数音声、窓分割、VAD、日本語ASR、自動QC・採用、永続ジョブ | `studio_backend/audio_import.py`、`studio_backend/audio_import_jobs.py` |
+| 学習 | Speaker Inversion、LoRA、固定データセットスナップショット、進捗・停止・再開・履歴、モデル管理 | `src/features/training/`、`studio_backend/dataset_preprocessing.py`、`studio_backend/training_jobs.py` |
 
-The existing Irodori-TTS offline corpus recorder is integrated as a first-class Studio workspace rather than an iframe or separate application.
+共有機能として、`workspace/voices/profiles.json`を正本にするボイスライブラリと、同じ常駐モデル・FIFOキューを利用するVOICEVOX互換APIがあります。
 
-Current scope:
+## 実装済みの境界
 
-- Sequential reading prompts and acting direction
-- Automatic microphone permission and device refresh
-- Record, stop, review, redo and progress navigation
-- Named local datasets under `workspace/recordings/`
-- Automatic accepted-only training manifests without a manual export step
-- Stable dataset IDs that the Training workspace can select directly
+- Studioは外部Irodori-TTSの推論・前処理・学習コードを呼び出し、リポジトリ内へ複製しません。
+- マイク録音と長尺音声からの分割結果は、48 kHz・モノラル・PCM 16-bit WAVとして名前に対応した`workspace/recordings/<dataset-name>/wavs/`へ統一します。原本は`raw/`へ保持し、lossless FLACは前処理ジョブ内の一時形式としてWAV確定後に削除します。
+- マイク録音と長尺音声の確定時に、RAWを維持したまま方式共通の形式統一・前後無音調整・-16 LUFS正規化を行います。版、入出力ハッシュ、処理結果を録音ごとに記録します。
+- 学習は採用済みの共通加工済みWAVを検証してジョブ領域へ固定し、無音調整や音量正規化を再適用しません。モデル固有のlatentだけを学習ジョブで作ります。
+- 中断した学習は同じジョブから再開し、既定では検証済み成果物をスキップします。全上書き再実行は明示時だけ行い、原本と録音データセットは対象外です。
+- Speaker InversionとLoRAの成果物はStudio管理ディレクトリと`studio-model.json`へ保存し、ボイスライブラリから選択できます。
+- 台本制作と配信は同じブラウザー内再生音量・出力先設定を共有します。
+- プロジェクト、録音データセット、ボイス、学習済みモデルは、それぞれ安定したIDまたは保存上の参照関係を維持して管理します。
 
-The Recorder UI, audio conversion and device discovery live under `src/features/recorder`; server-owned dataset persistence lives in `studio_backend/recording_datasets.py`. The official 120-prompt starter corpus is versioned with Studio so recording remains available without running the external Irodori-TTS frontend.
+## 今後の実装候補
 
-## Training — implemented foundation
+### 優先度が高い検証・運用
 
-Provide guided local workflows around the external Irodori-TTS checkout.
+1. 実環境で完走・台本利用まで確認済みのSpeaker Inversionを回帰試験化し、LoRAも同じ実リポジトリ境界で完走確認する。
+2. モデル、codec、キュー、生成段階別時間、直近エラーを確認できる、通常時は閉じた診断パネルを追加する。
+3. `server.py`をアプリファクトリー／lifespan構成にし、外部Irodori-TTSをロードせずStudio APIの主要リソース操作を統合テストできるようにする。
+4. D&D、モーダル、音声許可、録音IndexedDB移行を、実ブラウザーの統合テストで検証する。
 
-Current scope:
+### 録音・学習
 
-- Select a named Studio recording dataset directly
-- Speaker Inversion as the recommended default and LoRA as an advanced path
-- Named models with stable Studio-owned output directories
-- DACVAE manifest preparation through the external Irodori-TTS checkout
-- Background process progress, logs, cancellation and recoverable job metadata
-- Completed Speaker Inversion and LoRA asset discovery by the Voice Library
+1. 学習タブから複数音声の前処理、進捗・停止、自動採用結果、任意の文字修正・採用・除外を操作する導線は実装済み。次は前処理失敗時の再開と、過去の前処理履歴を整理する管理UIを追加する。
+2. 無音、極端な音量、短すぎる録音、文字との不一致候補だけをより精度よく集めるデータセット検証キュー。
+3. 学習チェックポイントの比較試聴と、選択した成果物からボイスを作成する操作。
 
-Future additions:
+### 制作・外部連携
 
-- Add one or multiple long single-speaker recordings and guided segmentation/transcription
-- Dataset validation and a small exception queue rather than full manual labeling
-- Checkpoint comparison playback and one-click Voice Library profile creation
+1. 動画尺へ厳密に合わせる必要がある場合だけ使う、行単位の目標秒数。
+2. CFG時間範囲、Rescale、Speaker KV layersなど、現行ペイロードには存在するがUIに露出していない研究者向け設定。
+3. 実クライアント需要を確認した上でのVOICEVOX `/multi_synthesis`などの追加互換経路。
 
-Training jobs run as explicit background processes with logs, cancellation boundaries and recoverable job metadata. Preprocessing writes only to the job workspace and never overwrites source recordings.
+### 保守性と堅牢性
 
-## Architecture direction
+1. 約1,900行の`src/App.jsx`を、共有状態の所有者を維持しながらScript、Live、Voice Libraryの機能単位へ段階的に分割する。
+2. トップレベルワークスペースを遅延ロードし、本番バンドルの500 kB超警告を解消する。
+3. 完了した合成ジョブへ保持件数または有効期限を設け、長時間稼働時のメモリ増加を防ぐ。
+4. 録音WAVをRIFFシグネチャだけでなく実デコードで検証し、WAV、`dataset.json`、`dataset.jsonl`の更新を失敗時にロールバックできるようにする。
+5. 制作書き出しとVOICEVOX後処理のリサンプリングを、必要に応じて線形補間より高品質な方式へ切り替え可能にする。
 
-As these workspaces are introduced, split the current frontend by feature without changing the user-facing top-level shell:
+## リファクタリング方針
 
-```text
-src/features/
-├─ production/
-├─ live/
-├─ recorder/
-└─ training/
-```
-
-Backend orchestration should likewise separate inference and training job managers while sharing configuration, asset discovery and the Voice Library. Do not move Irodori-TTS source code into Studio; invoke the configured external repository through stable adapters.
+機能分割そのものを目的にしません。複数ワークスペースで同じ保存、確認、選択、並び替え、状態表示を再利用できる場合だけ共通化します。現在、録音と学習は`src/features/`へ分離済みで、台本制作と配信は共有する再生・プロジェクト・ボイス状態が多いため`src/App.jsx`にあります。将来分割する場合も、この共有状態の所有者を先に定義します。

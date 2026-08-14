@@ -7,7 +7,6 @@ import {
   appendLineTake,
   duplicateLine,
   removedAudioFiles,
-  reorderLine,
   selectLineTake,
   splitImportedText,
   updateLine,
@@ -65,10 +64,7 @@ test("a fifth take keeps the previous selection and discards the oldest alternat
   assert.equal(lines[0].takes.some((take) => take.audioFile === "1.wav"), false);
 });
 
-test("reorder and multiline import preserve expected order", () => {
-  const first = createLine({ text: "一" });
-  const second = createLine({ text: "二" });
-  assert.deepEqual(reorderLine([first, second], second.id, -1).map((line) => line.text), ["二", "一"]);
+test("multiline import preserves input order and applies the selected voice", () => {
   const imported = splitImportedText("甲\n\n乙\n", { voiceId: "voice-selected" });
   assert.deepEqual(imported.map((line) => line.text), ["甲", "乙"]);
   assert.deepEqual(imported.map((line) => line.voiceId), ["voice-selected", "voice-selected"]);

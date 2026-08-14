@@ -174,12 +174,12 @@ if ($ForceSync -or -not $backendMatches) {
     Invoke-Checked "uv" @("sync", "--project", $resolvedIrodoriPath, "--extra", $TorchBackend) $resolvedIrodoriPath
 }
 
-& $irodoriPython -c "import fastapi, uvicorn, multipart" 2>$null
+& $irodoriPython -c "import fastapi, faster_whisper, uvicorn, numpy, pydantic, pyloudnorm, scipy, soundfile" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[setup] Installing the local Studio server dependencies into the Irodori environment" -ForegroundColor Cyan
     Invoke-Checked "uv" @(
         "pip", "install", "--python", $irodoriPython,
-        "fastapi>=0.115", "uvicorn>=0.34", "python-multipart>=0.0.20"
+        "fastapi>=0.115", "faster-whisper>=1.2.1", "numpy>=1.26", "pydantic>=2.10", "pyloudnorm>=0.1.1", "scipy>=1.11", "soundfile>=0.12", "uvicorn>=0.34"
     ) $studioRoot
 }
 

@@ -84,6 +84,10 @@ import {
 import { RecorderWorkspace } from "./features/recorder/RecorderWorkspace.jsx";
 import { TrainingWorkspace } from "./features/training/TrainingWorkspace.jsx";
 import {
+  LEARNING_DATASET_STORAGE_KEY,
+  resolveLearningDatasetId,
+} from "./learning-datasets.js";
+import {
   ConfirmDialog,
   IconButton,
   Modal,
@@ -250,11 +254,35 @@ function AudioOutputControl({ devices, value, status, onChange }) {
   );
 }
 
+function PlaybackAudioControls({
+  devices,
+  outputDeviceId,
+  outputStatus,
+  onOutputChange,
+  volume,
+  onVolumeChange,
+}) {
+  return (
+    <>
+      <AudioOutputControl
+        devices={devices}
+        value={outputDeviceId}
+        status={outputStatus}
+        onChange={onOutputChange}
+      />
+      <PlaybackVolumeControl value={volume} onChange={onVolumeChange} />
+    </>
+  );
+}
+
 function App() {
   const [project, setProject] = useState(loadLocalProject);
   const [selectedLineId, setSelectedLineId] = useState(() => project.lines[0]?.id || null);
   const [view, setView] = useState("script");
   const [recorderRecording, setRecorderRecording] = useState(false);
+  const [learningDatasetId, setLearningDatasetId] = useState(() => (
+    localStorage.getItem(LEARNING_DATASET_STORAGE_KEY) || ""
+  ));
   const [model, setModel] = useState({ loaded: false });
   const [bootstrap, setBootstrap] = useState(null);
   const [modelSettings, setModelSettings] = useState({
@@ -480,11 +508,17 @@ function App() {
   }, [toast]);
 
   useEffect(() => {
+    if (learningDatasetId) localStorage.setItem(LEARNING_DATASET_STORAGE_KEY, learningDatasetId);
+    else localStorage.removeItem(LEARNING_DATASET_STORAGE_KEY);
+  }, [learningDatasetId]);
+
+  useEffect(() => {
     let cancelled = false;
     api.bootstrap()
       .then((data) => {
         if (cancelled) return;
         setBootstrap(data);
+        setLearningDatasetId((current) => resolveLearningDatasetId(data.recording_datasets || [], current));
         const profiles = data.voice_profiles || [];
         const mergedProject = mergeVoiceLibrary(projectRef.current, profiles);
         projectRef.current = mergedProject;
@@ -1505,7 +1539,7 @@ function App() {
         </div>
         <nav className="view-switcher" aria-label="制作モード">
           <button className={view === "script" ? "active" : ""} onClick={() => setView("script")} disabled={recorderRecording}><FileText size={18} />台本制作</button>
-          <button className={view === "live" ? "active" : ""} onClick={() => setView("live")} disabled={recorderRecording}><Broadcast size={18} />配信コンソール</button>
+          <button className={view === "live" ? "active" : ""} onClick={() => setView("live")} disabled={recorderRecording}><Broadcast size={18} />配信</button>
           <button className={view === "recorder" ? "active" : ""} onClick={() => setView("recorder")}><MicrophoneStage size={18} />録音</button>
           <button className={view === "training" ? "active" : ""} onClick={() => setView("training")} disabled={recorderRecording}><GraduationCap size={18} />学習</button>
         </nav>
@@ -1557,13 +1591,14 @@ function App() {
                 <h1>読み上げ台本</h1>
               </div>
               <div className="transport-controls">
-                <AudioOutputControl
+                <PlaybackAudioControls
                   devices={audioOutputs}
-                  value={audioOutputPreference.deviceId}
-                  status={audioOutputStatus}
-                  onChange={chooseAudioOutput}
+                  outputDeviceId={audioOutputPreference.deviceId}
+                  outputStatus={audioOutputStatus}
+                  onOutputChange={chooseAudioOutput}
+                  volume={playbackVolume}
+                  onVolumeChange={updatePlaybackVolume}
                 />
-                <PlaybackVolumeControl value={playbackVolume} onChange={updatePlaybackVolume} />
                 <button className="secondary-button" onClick={generateAllMissing} disabled={!model.loaded || queueCount > 0}><MagicWand size={19} />未生成を作る</button>
                 {sequenceActive || speakingLineId ? (
                   <button className="stop-button" onClick={stopPlayback}><Stop size={19} weight="fill" />停止</button>
@@ -1597,16 +1632,17 @@ function App() {
         <main className="live-workspace">
           <section className="live-console">
             <div className="live-header">
-              <div><span className="eyebrow">LOW-LATENCY QUEUE</span><h1>配信コンソール</h1><p>入力した文章を順番に生成し、完成したものから自動再生します。</p></div>
+              <div><span className="eyebrow">LOW-LATENCY QUEUE</span><h1>配信</h1><p>入力した文章を順番に生成し、完成したものから自動再生します。</p></div>
               <div className="live-header-actions">
                 <div className="live-audio-controls">
-                  <AudioOutputControl
+                  <PlaybackAudioControls
                     devices={audioOutputs}
-                    value={audioOutputPreference.deviceId}
-                    status={audioOutputStatus}
-                    onChange={chooseAudioOutput}
+                    outputDeviceId={audioOutputPreference.deviceId}
+                    outputStatus={audioOutputStatus}
+                    onOutputChange={chooseAudioOutput}
+                    volume={playbackVolume}
+                    onVolumeChange={updatePlaybackVolume}
                   />
-                  <PlaybackVolumeControl value={playbackVolume} onChange={updatePlaybackVolume} />
                 </div>
                 <button className="stop-button" onClick={stopLive}><Stop size={19} weight="fill" />発話を止める</button>
               </div>
@@ -1663,12 +1699,19 @@ function App() {
           onRecordingStateChange={setRecorderRecording}
           playbackVolume={playbackVolume}
           outputDeviceId={audioOutputPreference.deviceId}
+          datasetId={learningDatasetId}
+          onDatasetIdChange={setLearningDatasetId}
         />
       ) : (
         <TrainingWorkspace
           bootstrap={bootstrap}
           notify={notify}
           onModelUnloaded={() => setModel({ loaded: false })}
+          onOpenRecorder={() => setView("recorder")}
+          datasetId={learningDatasetId}
+          onDatasetIdChange={setLearningDatasetId}
+          playbackVolume={playbackVolume}
+          outputDeviceId={audioOutputPreference.deviceId}
         />
       )}
 
@@ -1880,7 +1923,7 @@ function App() {
       {voiceNameAction && <NameDialog
         title={voiceNameAction === "create" ? "ボイスを追加" : "ボイス名を変更"}
         eyebrow="VOICE NAME"
-        description="台本制作と配信コンソールで共通して表示される名前です。ボイスの設定内容は維持されます。"
+        description="台本制作と配信で共通して表示される名前です。ボイスの設定内容は維持されます。"
         label="ボイス名"
         value={voiceNameValue}
         onChange={setVoiceNameValue}
