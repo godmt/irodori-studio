@@ -69,13 +69,48 @@ cd C:\AI\irodori-studio
 
 1. 保存済みのIrodori-TTSパスを検証
 2. 必要ならIrodori-TTSのuv環境を作成
-3. Windowsパッケージでは同梱SPAを使用し、ソース版では必要に応じてNode依存を導入してビルド
+3. Windowsパッケージでは同梱SPAを使用し、ソース版では依存定義の変更を検知して必要なNode・Python依存を同期し、SPAをビルド
 4. Studio APIを`127.0.0.1:8765`で起動
 5. Irodoriモデルを同じPythonプロセスへバックグラウンドロード
 6. VOICEVOX互換APIを`127.0.0.1:50021`で起動
 7. ブラウザーでStudioを開く
 
 設定は`.studio/config.json`へ保存され、Gitには含まれません。
+
+## 更新方法
+
+### Gitで取得したソース版
+
+Studioを停止してから、Studioのフォルダーで次を実行します。
+
+```powershell
+.\update-studio.ps1
+.\start-studio.ps1
+```
+
+PowerShellを開かず、`update-studio.cmd`をダブルクリックしても更新できます。結果を確認できるよう、完了または失敗後もキーを押すまでウィンドウを閉じません。更新が完了したら`start-studio.cmd`で起動します。
+
+`update-studio`は未コミットの変更がないことを確認してから`git pull --ff-only`を実行し、続けて更新後の準備だけを行います。`package-lock.json`とStudio用Python依存の定義を前回準備時の記録と比較し、変更がある場合だけ`npm ci`、Python依存の更新、SPAの再ビルドを自動実行します。したがって通常の更新では、手作業で`npm install`や`uv pip install`を実行する必要はありません。未コミットのファイルがある場合は、ユーザーの編集を上書きしないよう更新を中止します。
+
+同じ処理を手動で行う場合は次の2コマンドです。
+
+```powershell
+git pull --ff-only
+.\start-studio.ps1 -SetupOnly
+```
+
+依存環境が壊れた場合や、Irodori-TTS側も更新した場合は、一度だけ完全同期します。保存済みのIrodori-TTSパスとbackend設定が使われるため、通常は引数を再指定する必要はありません。
+
+```powershell
+.\update-studio.ps1 -ForceSync
+.\start-studio.ps1
+```
+
+`-ForceSync`は、更新取得後にIrodori-TTSのuv環境、Studio用Python依存、ソース版のNode依存をすべて同期し直します。ユーザーの台本、録音、学習データ、モデルが入る`workspace/`と、保存済み設定が入る`.studio/`は削除しません。
+
+### Windowsリリースパッケージ
+
+リリースZIP版はGitリポジトリではないため、`git pull`せず、ソース版専用の`update-studio`も同梱しません。Studioを停止し、新しいReleaseの`irodori-studio-vX.Y.Z-windows.zip`を新しいフォルダーへ展開したうえで、以前のフォルダーから`workspace/`と`.studio/`を移します。Irodori-TTS本体、モデル、学習成果物は外部リポジトリにあるため移動不要です。移行後は`.\start-studio.ps1 -SetupOnly`を一度実行してから起動します。
 
 ## PyTorch backend
 

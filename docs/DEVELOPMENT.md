@@ -14,6 +14,7 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 ## Runtime boundaries
 
 - `start-studio.ps1` resolves and validates the external Irodori-TTS repository, verifies that its installed Torch backend matches the configured backend, and executes the server with that repository's `.venv` Python directly.
+- Source checkouts persist dependency fingerprints under ignored `.studio/`. A changed `package-lock.json`, changed Studio Python requirement list, missing dependency directory, or explicit `-ForceSync` triggers the corresponding deterministic synchronization before the SPA build. Packaged releases have no frontend source and continue to use the bundled client without Node.js.
 - `server.py` inserts that root into `sys.path` before importing `irodori_tts`.
 - `StudioEngine` owns one resident `IrodoriInferenceRuntime` and one FIFO generation worker.
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
@@ -60,6 +61,7 @@ studio_backend/
   runtime_paths.py       External Irodori-TTS discovery and validation
 server.py                Local API, static SPA host and process orchestration
 build-release.ps1        Allow-listed Windows runtime package and SHA-256 builder
+update-studio.ps1        Source-checkout fast-forward update and dependency synchronization
 .github/workflows/       Release-published package automation
 ```
 

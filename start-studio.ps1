@@ -82,6 +82,20 @@ function Invoke-Checked([string]$Command, [string[]]$Arguments, [string]$Working
     finally { Pop-Location }
 }
 
+function Get-TextSha256([string]$Value) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    }
+    finally { $sha256.Dispose() }
+}
+
+function Read-DependencyMarker([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
+    return (Get-Content -Raw -LiteralPath $Path).Trim().ToLowerInvariant()
+}
+
 function Get-IrodoriTorchBackend([string]$PythonPath) {
     if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) { return $null }
     $ErrorActionPreference = "Continue"
@@ -190,20 +204,43 @@ if ($ForceSync -or -not $backendMatches) {
     Invoke-Checked "uv" @("sync", "--project", $resolvedIrodoriPath, "--extra", $TorchBackend) $resolvedIrodoriPath
 }
 
+$studioPythonDependencies = @(
+    "fastapi>=0.115",
+    "faster-whisper>=1.2.1",
+    "numpy>=1.26",
+    "pydantic>=2.10",
+    "pyloudnorm>=0.1.1",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "uvicorn>=0.34"
+)
+$studioPythonMarkerPath = Join-Path $configDirectory "studio-python-dependencies.sha256"
+$studioPythonFingerprint = Get-TextSha256 ((@($irodoriPython) + $studioPythonDependencies) -join "`n")
+$studioPythonMarker = Read-DependencyMarker $studioPythonMarkerPath
 & $irodoriPython -c "import fastapi, faster_whisper, uvicorn, numpy, pydantic, pyloudnorm, scipy, soundfile" 2>$null
-if ($LASTEXITCODE -ne 0) {
+$studioPythonImportsAvailable = $LASTEXITCODE -eq 0
+if ($ForceSync -or -not $studioPythonImportsAvailable -or $studioPythonMarker -ne $studioPythonFingerprint) {
     Write-Host "[setup] Installing the local Studio server dependencies into the Irodori environment" -ForegroundColor Cyan
-    Invoke-Checked "uv" @(
-        "pip", "install", "--python", $irodoriPython,
-        "fastapi>=0.115", "faster-whisper>=1.2.1", "numpy>=1.26", "pydantic>=2.10", "pyloudnorm>=0.1.1", "scipy>=1.11", "soundfile>=0.12", "uvicorn>=0.34"
-    ) $studioRoot
+    $studioPythonInstallArguments = @("pip", "install", "--python", $irodoriPython)
+    $studioPythonInstallArguments += $studioPythonDependencies
+    Invoke-Checked "uv" $studioPythonInstallArguments $studioRoot
+    Set-Content -LiteralPath $studioPythonMarkerPath -Value $studioPythonFingerprint -Encoding ASCII
 }
 
 if ($hasFrontendSource) {
     $nodeModules = Join-Path $studioRoot "node_modules"
-    if (-not (Test-Path -LiteralPath $nodeModules -PathType Container)) {
+    $packageLockPath = Join-Path $studioRoot "package-lock.json"
+    $frontendMarkerPath = Join-Path $configDirectory "frontend-dependencies.sha256"
+    $frontendFingerprint = (Get-FileHash -LiteralPath $packageLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $frontendMarker = Read-DependencyMarker $frontendMarkerPath
+    if (
+        $ForceSync -or
+        -not (Test-Path -LiteralPath $nodeModules -PathType Container) -or
+        $frontendMarker -ne $frontendFingerprint
+    ) {
         Write-Host "[setup] Installing Studio frontend dependencies" -ForegroundColor Cyan
         Invoke-Checked "npm" @("ci") $studioRoot
+        Set-Content -LiteralPath $frontendMarkerPath -Value $frontendFingerprint -Encoding ASCII
     }
 
     $needsBuild = -not (Test-Path -LiteralPath $clientIndex -PathType Leaf)
@@ -213,6 +250,7 @@ if ($hasFrontendSource) {
             $frontendSourceDirectory,
             (Join-Path $studioRoot "index.html"),
             (Join-Path $studioRoot "package.json"),
+            $packageLockPath,
             (Join-Path $studioRoot "vite.config.mjs")
         )
         $latestSource = Get-ChildItem -LiteralPath $sourcePaths -Recurse -File |

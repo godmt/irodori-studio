@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-08-15
+
+- Added `update-studio.ps1` and a double-clickable `update-studio.cmd`, plus dependency fingerprints so source checkouts safely fast-forward, automatically run `npm ci`, refresh Studio Python requirements and rebuild only when definitions changed; `-ForceSync` provides a complete recovery synchronization without touching user workspace data.
 - Added sentence-aware long-text synthesis shared by Script, Live, and the VOICEVOX-compatible runtime: bounded segments are generated sequentially and returned as one WAV, while Live now surfaces playback failures, preserves retry from history, and falls back to the system output when a selected device becomes unavailable.
 - Reduced Recorder tab reopen latency for large learning datasets by caching unchanged recording manifests and summaries, and by excluding long-audio import records from the corpus-recording payload without removing them from Training.
 - Added an allow-listed Windows runtime package with a prebuilt frontend, no Node.js runtime requirement, SHA-256 output, and automatic attachment to newly published GitHub Releases while keeping development documentation and tests in source archives only.
