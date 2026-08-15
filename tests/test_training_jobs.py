@@ -10,13 +10,18 @@ from array import array
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 STUDIO_ROOT = Path(__file__).resolve().parents[1]
 if str(STUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(STUDIO_ROOT))
 
 from studio_backend.recording_datasets import RecordingDatasetStore  # noqa: E402
-from studio_backend.training_jobs import TrainingJobManager  # noqa: E402
+from studio_backend.training_jobs import (  # noqa: E402
+    TrainingJobManager,
+    estimate_training_timing,
+    lora_schedule_steps,
+)
 
 
 def empty_wav() -> bytes:
@@ -30,6 +35,42 @@ def empty_wav() -> bytes:
 
 
 class TrainingJobManagerTests(unittest.TestCase):
+    def test_training_timing_estimates_remaining_and_total_duration(self) -> None:
+        estimate = estimate_training_timing(
+            start_step=100,
+            current_step=200,
+            max_steps=1_000,
+            elapsed_seconds=50.0,
+        )
+
+        self.assertIsNotNone(estimate)
+        assert estimate is not None
+        self.assertEqual(estimate["observed_steps"], 100)
+        self.assertEqual(estimate["seconds_per_step"], 0.5)
+        self.assertEqual(estimate["estimated_remaining_seconds"], 400.0)
+        self.assertEqual(estimate["estimated_total_seconds"], 500.0)
+        self.assertEqual(estimate["confidence"], "estimated")
+
+    def test_training_timing_waits_until_a_step_has_completed(self) -> None:
+        self.assertIsNone(
+            estimate_training_timing(
+                start_step=100,
+                current_step=100,
+                max_steps=1_000,
+                elapsed_seconds=5.0,
+            )
+        )
+
+    def test_lora_schedule_scales_the_upstream_wsd_phases(self) -> None:
+        self.assertEqual(
+            lora_schedule_steps(1_500),
+            {"warmup_steps": 50, "stable_steps": 1_200, "decay_steps": 250},
+        )
+        self.assertEqual(
+            lora_schedule_steps(3_000),
+            {"warmup_steps": 100, "stable_steps": 2_400, "decay_steps": 500},
+        )
+
     def create_manager(self, root: Path) -> tuple[TrainingJobManager, RecordingDatasetStore]:
         irodori_root = root / "Irodori-TTS"
         (irodori_root / "configs").mkdir(parents=True)
@@ -106,6 +147,13 @@ print('step=1 loss=0.5', flush=True)
                 "workspace/models/speaker-embeddings",
             )
             self.assertEqual(manager.paths()["lora_adapters"], "workspace/models/lora")
+            self.assertEqual(
+                manager.requirements()["recommended_vram_gb"],
+                {
+                    "speaker_inversion": {"bf16": 12, "fp16": 12, "fp32": 16},
+                    "lora": {"bf16": 24, "fp16": 24, "fp32": 32},
+                },
+            )
 
     def test_previous_active_job_is_marked_interrupted_on_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -131,6 +179,33 @@ print('step=1 loss=0.5', flush=True)
             recovered = manager.load("job0001")
             self.assertEqual(recovered["status"], "interrupted")
             self.assertEqual(recovered["stage"], "interrupted")
+
+    @patch("studio_backend.training_jobs.terminate_process_tree")
+    def test_cancellation_terminates_the_process_tree_for_both_methods(
+        self, terminate_process_tree: Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager, _ = self.create_manager(Path(directory))
+            for method in ("speaker_inversion", "lora"):
+                job_id = f"cancel-{method}"
+                manager._write(
+                    {
+                        "id": job_id,
+                        "name": method,
+                        "method": method,
+                        "status": "training",
+                        "stage": "training",
+                    }
+                )
+                process = Mock()
+                process.poll.return_value = None
+                manager._processes[job_id] = process
+
+                cancelled = manager.cancel(job_id)
+
+                self.assertEqual(cancelled["status"], "cancelling")
+                terminate_process_tree.assert_called_with(process)
+                terminate_process_tree.reset_mock()
 
     def test_named_models_are_discovered_independently_of_job_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

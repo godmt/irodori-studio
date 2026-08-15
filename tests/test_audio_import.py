@@ -23,12 +23,18 @@ from studio_backend.audio_import import (  # noqa: E402
     decode_audio_window,
     default_import_settings,
     merge_speech_ranges,
+    normalize_transcript,
     quality_reasons,
 )
 
 
 class FakeWhisperModel:
+    def __init__(self, calls: list[int] | None = None) -> None:
+        self.calls = calls
+
     def transcribe(self, audio: np.ndarray, **_: object) -> tuple[list[object], object]:
+        if self.calls is not None:
+            self.calls.append(len(audio))
         words = [SimpleNamespace(word="テスト音声です", probability=0.95)]
         segment = SimpleNamespace(
             text=" テスト音声です。",
@@ -48,6 +54,9 @@ class PredictableProcessor(LongAudioImportProcessor):
 
 
 class AudioImportTests(unittest.TestCase):
+    def test_transcript_normalization_canonicalizes_japanese_fullwidth_ascii(self) -> None:
+        self.assertEqual(normalize_transcript(" 本当に？  はい！ "), "本当に? はい!")
+
     def test_nearby_vad_ranges_merge_without_exceeding_clip_limit(self) -> None:
         merged = merge_speech_ranges(
             [SpeechRange(0.0, 2.0), SpeechRange(2.4, 4.0), SpeechRange(10.0, 23.0)],
@@ -126,8 +135,9 @@ class AudioImportTests(unittest.TestCase):
                     result[rate] = audio
                 return result
 
+            transcription_calls: list[int] = []
             processor = PredictableProcessor(
-                model_factory=lambda *args, **kwargs: FakeWhisperModel(),
+                model_factory=lambda *args, **kwargs: FakeWhisperModel(transcription_calls),
                 decoder=fake_decoder,
                 probe=fake_probe,
             )
@@ -178,6 +188,30 @@ class AudioImportTests(unittest.TestCase):
             self.assertEqual(
                 [candidate["id"] for candidate in candidates],
                 [candidate["id"] for candidate in second_candidates],
+            )
+
+            calls_before_resume = len(transcription_calls)
+            resumed_report = processor.process(
+                {
+                    "job_id": "12345678abcdef",
+                    "dataset_id": "dataset",
+                    "sources": [{"path": str(source)}, {"path": str(second_source)}],
+                    "settings": {},
+                    "resume_existing": True,
+                },
+                output,
+            )
+            resumed_candidates = [
+                json.loads(line)
+                for line in (output / "candidates.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(len(transcription_calls), calls_before_resume)
+            self.assertEqual(resumed_report["reused_candidate_count"], 2)
+            self.assertEqual(
+                [candidate["id"] for candidate in resumed_candidates],
+                [candidate["id"] for candidate in candidates],
             )
 
 

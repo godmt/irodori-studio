@@ -18,6 +18,7 @@ from studio_backend.dataset_preprocessing import (
     valid_dataset_wav,
 )
 from studio_backend.path_utils import safe_stem
+from studio_backend.text_utils import normalize_training_text
 from studio_backend.time_utils import utc_now
 
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
@@ -575,7 +576,7 @@ class RecordingDatasetStore:
                     preprocessing = prepare_dataset_audio(source, target)
                     created.append(target)
                     accepted = bool(candidate.get("accepted"))
-                    text = str(candidate.get("text") or "").strip()
+                    text = normalize_training_text(str(candidate.get("text") or ""))
                     prompt_id = str(candidate["id"])
                     rms_dbfs = (
                         float(candidate["rms_dbfs"])
@@ -685,7 +686,7 @@ class RecordingDatasetStore:
                 raise KeyError(prompt_id)
             prompt = recording.setdefault("prompt", {})
             if text is not None:
-                prompt["text"] = text.strip()
+                prompt["text"] = normalize_training_text(text)
             normalized_text = str(prompt.get("text") or "").strip()
             if accepted is True and not normalized_text:
                 raise ValueError("採用する音声には文字起こしが必要です")

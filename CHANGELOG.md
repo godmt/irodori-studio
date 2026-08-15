@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.0 — 2026-08-15
+
+- Added method- and precision-aware CUDA preflight checks for Speaker Inversion and LoRA that warn when physical VRAM is below the recommendation, while allowing an explicit override and leaving the resident model untouched when cancelled.
+- Disabled routine Uvicorn access logs by default so frequent successful polling requests do not bury Training, warning, and error output; added the opt-in `-AccessLog` launch switch for HTTP debugging.
+- Fixed Training and long-audio cancellation to terminate the complete worker process tree and wait for exit, ensuring CUDA/VRAM resources are released instead of leaving a child trainer running.
+- Changed the default Speaker Inversion run to 500 steps and added in-field guidance recommending 1000 steps or more when pursuing higher quality.
+- Changed the default LoRA run to 1,500 steps and added 3,000-step guidance for high-quality tuning.
+- Added live Training duration estimates showing approximate remaining and full-run time from observed step speed.
+- Added per-dataset long-audio preprocessing history management, resumable failed/interrupted/cancelled jobs that reuse validated candidate checkpoints, and safe history deletion that retains committed WAVs and RAW sources.
+
 ## 0.2.0 — 2026-08-14
 
 - Added the long-audio preprocessing core for multiple WAV/FLAC/MP3/M4A-compatible single-speaker sources: bounded overlapping decode windows, Silero VAD, faster-whisper Japanese transcription, automatic QC/adoption, optional transcript review state, job-local lossless FLAC intermediates, stable rerun IDs, atomic 48 kHz PCM16 WAV dataset commits, and persistent cancellable jobs without creating a giant master WAV.

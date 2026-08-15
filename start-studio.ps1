@@ -9,6 +9,7 @@ param(
     [switch]$NoOpen,
     [switch]$NoAutoloadModel,
     [switch]$NoVoicevoxApi,
+    [switch]$AccessLog,
     [int]$Port = 8765,
     [int]$VoicevoxPort = 50021,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -225,6 +226,7 @@ $pythonArguments = @(
 if ($NoOpen) { $pythonArguments += "--no-open" }
 if ($NoAutoloadModel) { $pythonArguments += "--no-autoload-model" }
 if ($NoVoicevoxApi) { $pythonArguments += "--no-voicevox-api" }
+if ($AccessLog) { $pythonArguments += "--access-log" }
 if ($ServerArgs) { $pythonArguments += $ServerArgs }
 
 Write-Host "[studio] Starting the Studio API, Irodori runtime, and VOICEVOX compatibility API" -ForegroundColor Cyan

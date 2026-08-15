@@ -256,11 +256,12 @@ class RecordingDatasetStoreTests(unittest.TestCase):
             corrected = store.update_recording_review(
                 dataset_id,
                 candidate["id"],
-                text="文字だけを修正",
+                text="本当に？　文字だけを修正！",
                 accepted=None,
             )
             self.assertTrue(corrected["accepted"])
             self.assertEqual(corrected["reviewState"], "auto_accepted")
+            self.assertEqual(corrected["prompt"]["text"], "本当に? 文字だけを修正!")
 
             excluded = store.update_recording_review(
                 dataset_id,

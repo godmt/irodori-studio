@@ -10,9 +10,11 @@ from typing import Any
 from uuid import uuid4
 
 from studio_backend.audio_import_worker import PROGRESS_PREFIX
+from studio_backend.process_utils import isolated_process_kwargs, terminate_process_tree
 from studio_backend.time_utils import utc_now
 
 ACTIVE_IMPORT_STATUSES = {"queued", "loading_model", "transcribing", "committing", "cancelling"}
+RESUMABLE_IMPORT_STATUSES = {"cancelled", "failed", "interrupted"}
 
 
 class AudioImportJobManager:
@@ -69,6 +71,7 @@ class AudioImportJobManager:
                     job["status"] = "interrupted"
                     job["stage"] = "interrupted"
                     job["message"] = "Studioの前回終了時に音声の前処理が中断されました"
+                    job["completed_at"] = utc_now()
                     job["updated_at"] = utc_now()
                     self._write(job)
             except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
@@ -104,7 +107,7 @@ class AudioImportJobManager:
 
     def create(self, payload: Any) -> dict[str, Any]:
         with self._lock:
-            self.recording_store.load(payload.dataset_id)
+            dataset = self.recording_store.load(payload.dataset_id)
             if self.has_active_job():
                 raise ValueError(
                     "別の音声前処理が実行中です。完了または中止してから開始してください"
@@ -136,9 +139,10 @@ class AudioImportJobManager:
             )
             now = utc_now()
             job = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "id": job_id,
                 "dataset_id": payload.dataset_id,
+                "dataset_name": dataset["name"],
                 "status": "queued",
                 "stage": "queued",
                 "message": "前処理を開始します",
@@ -147,6 +151,10 @@ class AudioImportJobManager:
                 "accepted_count": 0,
                 "created_at": now,
                 "updated_at": now,
+                "completed_at": None,
+                "attempt": 1,
+                "resume_mode": "new",
+                "failure": None,
                 "sources": payload_data["sources"],
                 "settings": settings,
             }
@@ -190,6 +198,7 @@ class AudioImportJobManager:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                **isolated_process_kwargs(hide_window=True),
             )
             with self._lock:
                 self._processes[job_id] = process
@@ -239,6 +248,7 @@ class AudioImportJobManager:
                     status="cancelled",
                     stage="cancelled",
                     message="前処理を中止しました",
+                    completed_at=utc_now(),
                 )
                 return
             if exit_code != 0:
@@ -278,6 +288,8 @@ class AudioImportJobManager:
                 committed=committed,
                 candidate_count=int(report["candidate_count"]),
                 accepted_count=int(report["accepted_count"]),
+                completed_at=utc_now(),
+                failure=None,
             )
         except Exception as exc:
             with self._lock:
@@ -290,6 +302,7 @@ class AudioImportJobManager:
                         status="cancelled",
                         stage="cancelled",
                         message="前処理を中止しました",
+                        completed_at=utc_now(),
                     )
                 else:
                     self._update(
@@ -297,6 +310,11 @@ class AudioImportJobManager:
                         status="failed",
                         stage="failed",
                         message=str(exc),
+                        completed_at=utc_now(),
+                        failure={
+                            "summary": str(exc),
+                            "action": "保存済みの分割音声と文字起こしを再利用して再開できます。",
+                        },
                     )
             except Exception:
                 pass
@@ -313,9 +331,58 @@ class AudioImportJobManager:
                 message="前処理を中止しています",
             )
             process = self._processes.get(job_id)
-            if process is not None and process.poll() is None:
-                process.terminate()
-            return job
+
+        if process is not None and process.poll() is None:
+            terminate_process_tree(process)
+        return self._read(job_id)
+
+    def resume(self, job_id: str) -> dict[str, Any]:
+        with self._lock:
+            job = self._read(job_id)
+            if job.get("status") not in RESUMABLE_IMPORT_STATUSES:
+                raise ValueError("失敗・中断・停止した音声前処理だけ再開できます")
+            if self.has_active_job():
+                raise ValueError(
+                    "別の音声前処理が実行中です。完了または中止してから再開してください"
+                )
+            dataset = self.recording_store.load(str(job["dataset_id"]))
+            job_directory = self._job_directory(job_id)
+            config_path = job_directory / "config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            for source in config.get("sources") or []:
+                source_path = Path(str(source.get("path") or "")).resolve()
+                if not source_path.is_file():
+                    raise FileNotFoundError(
+                        f"再開に必要なRAW音声が見つかりません: {source_path.name}"
+                    )
+            config["resume_existing"] = True
+            temporary = job_directory / "config.tmp"
+            temporary.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(config_path)
+            job.update(
+                schema_version=2,
+                dataset_name=dataset["name"],
+                status="queued",
+                stage="queued",
+                message="保存済みの処理結果を再利用して前処理を再開します",
+                completed_at=None,
+                attempt=int(job.get("attempt") or 1) + 1,
+                resume_mode="reuse_existing",
+                failure=None,
+                updated_at=utc_now(),
+            )
+            self._write(job)
+        thread = threading.Thread(
+            target=self._run,
+            args=(job_id,),
+            daemon=True,
+            name=f"audio-import-{job_id[:8]}-resume-{job['attempt']}",
+        )
+        thread.start()
+        return job
 
     def delete(self, job_id: str) -> None:
         with self._lock:

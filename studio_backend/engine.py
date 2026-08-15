@@ -138,8 +138,10 @@ class StudioEngine:
         with self._jobs_lock:
             info["running_jobs"] = sum(job.status == "running" for job in self.jobs.values())
         if torch.cuda.is_available():
+            properties = torch.cuda.get_device_properties(0)
             info["cuda"] = {
                 "name": torch.cuda.get_device_name(0),
+                "total_gb": round(properties.total_memory / 1024**3, 2),
                 "allocated_gb": round(torch.cuda.memory_allocated(0) / 1024**3, 2),
                 "reserved_gb": round(torch.cuda.memory_reserved(0) / 1024**3, 2),
             }

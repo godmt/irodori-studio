@@ -25,7 +25,22 @@ class RequestModelTests(unittest.TestCase):
         self.assertEqual(RecordingDatasetCreateRequest(name="  話者A  ").name, "話者A")
         training = TrainingJobCreateRequest(name="  話者モデル  ", dataset_id="dataset")
         self.assertEqual(training.name, "話者モデル")
+        self.assertEqual(training.max_steps, 500)
         self.assertEqual(VoiceProfileRequest(name="  メインボイス  ").name, "メインボイス")
+
+    def test_training_steps_default_to_the_selected_method(self) -> None:
+        speaker = TrainingJobCreateRequest(name="話者", dataset_id="dataset")
+        lora = TrainingJobCreateRequest(name="話者LoRA", dataset_id="dataset", method="lora")
+        custom = TrainingJobCreateRequest(
+            name="話者LoRA 高品質",
+            dataset_id="dataset",
+            method="lora",
+            max_steps=3000,
+        )
+
+        self.assertEqual(speaker.max_steps, 500)
+        self.assertEqual(lora.max_steps, 1500)
+        self.assertEqual(custom.max_steps, 3000)
 
     def test_whitespace_only_resource_names_are_rejected(self) -> None:
         for schema in (ProjectRenameRequest, RecordingDatasetCreateRequest):

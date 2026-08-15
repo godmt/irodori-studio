@@ -34,17 +34,33 @@ import {
   Modal,
   NameDialog,
 } from "../../components/StudioUI.jsx";
+import { getTrainingVramWarning } from "./training-requirements.js";
 import "./training.css";
 
 const ACTIVE_TRAINING_STATUSES = new Set(["queued", "preparing", "training", "cancelling"]);
 const ACTIVE_IMPORT_STATUSES = new Set(["queued", "loading_model", "transcribing", "committing", "cancelling"]);
+const RESUMABLE_IMPORT_STATUSES = new Set(["cancelled", "failed", "interrupted"]);
 const RESUMABLE_TRAINING_STATUSES = new Set(["cancelled", "failed", "interrupted"]);
+const DEFAULT_TRAINING_STEPS = {
+  speaker_inversion: 500,
+  lora: 1500,
+};
 
 function formatDuration(seconds) {
   const value = Math.round(Math.max(0, Number(seconds) || 0));
+  const hours = Math.floor(value / 3600);
   const minutes = Math.floor(value / 60);
   const remainder = value % 60;
+  if (hours > 0) return `${hours}時間${String(minutes % 60).padStart(2, "0")}分`;
   return `${minutes}分${String(remainder).padStart(2, "0")}秒`;
+}
+
+function formatTrainingEstimate(timing) {
+  if (!timing) return { remaining: "計算中", total: "計算中" };
+  return {
+    remaining: formatDuration(timing.estimated_remaining_seconds),
+    total: formatDuration(timing.estimated_total_seconds),
+  };
 }
 
 function formatDate(value) {
@@ -205,6 +221,7 @@ function DatasetReviewModal({
         accepted,
       });
       onRecordingUpdated(updated);
+      setText(String(updated.prompt?.text || ""));
       notify(accepted ? "学習に使う音声として採用しました" : "学習対象から除外しました", "success");
     } catch (error) {
       notify(error.message, "error");
@@ -221,6 +238,7 @@ function DatasetReviewModal({
         text: text.trim(),
       });
       onRecordingUpdated(updated);
+      setText(String(updated.prompt?.text || ""));
       notify("文字起こしを修正しました", "success");
     } catch (error) {
       notify(error.message, "error");
@@ -357,7 +375,7 @@ export function TrainingWorkspace({
   const [checkpoint, setCheckpoint] = useState(() => bootstrap?.default_checkpoint || "");
   const [device, setDevice] = useState(() => bootstrap?.default_device || "cuda");
   const [precision, setPrecision] = useState("bf16");
-  const [maxSteps, setMaxSteps] = useState(3000);
+  const [maxSteps, setMaxSteps] = useState(DEFAULT_TRAINING_STEPS.speaker_inversion);
   const [sourcePaths, setSourcePaths] = useState([]);
   const [overwriteImport, setOverwriteImport] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -374,6 +392,9 @@ export function TrainingWorkspace({
   const [deleteJobTarget, setDeleteJobTarget] = useState(null);
   const [restartJobTarget, setRestartJobTarget] = useState(null);
   const [failureJob, setFailureJob] = useState(null);
+  const [showImportHistory, setShowImportHistory] = useState(false);
+  const [deleteImportJobTarget, setDeleteImportJobTarget] = useState(null);
+  const [trainingVramWarning, setTrainingVramWarning] = useState(null);
 
   const selectedDataset = useMemo(
     () => datasets.find((dataset) => dataset.id === datasetId) || null,
@@ -389,6 +410,10 @@ export function TrainingWorkspace({
   );
   const selectedDatasetImport = useMemo(
     () => importJobs.find((job) => job.dataset_id === datasetId) || null,
+    [datasetId, importJobs],
+  );
+  const selectedDatasetImports = useMemo(
+    () => importJobs.filter((job) => job.dataset_id === datasetId),
     [datasetId, importJobs],
   );
   const recordings = useMemo(
@@ -465,7 +490,7 @@ export function TrainingWorkspace({
   }, [activeImportJob, activeJob, refresh]);
 
   useEffect(() => {
-    setMaxSteps(method === "speaker_inversion" ? 3000 : 30000);
+    setMaxSteps(DEFAULT_TRAINING_STEPS[method]);
   }, [method]);
 
   useEffect(() => {
@@ -563,19 +588,38 @@ export function TrainingWorkspace({
     }
   };
 
-  const startTraining = async () => {
-    if (!name.trim()) {
-      notify("モデル名を入力してください", "error");
-      return;
+  const resumeImport = async (job) => {
+    if (!job || busy) return;
+    setBusy(true);
+    try {
+      const updated = await api.resumeAudioImportJob(job.id);
+      setImportJobs((current) => current.map((item) => item.id === updated.id ? updated : item));
+      onModelUnloaded?.();
+      notify("保存済みの処理結果から音声前処理を再開しました", "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
     }
-    if (!selectedDataset) {
-      notify("学習データセットを選択してください", "error");
-      return;
+  };
+
+  const deleteImportJob = async (job) => {
+    if (!job || busy) return;
+    setBusy(true);
+    try {
+      await api.deleteAudioImportJob(job.id);
+      setImportJobs((current) => current.filter((item) => item.id !== job.id));
+      setDeleteImportJobTarget(null);
+      notify("音声前処理の履歴を削除しました", "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
     }
-    if (!selectedDataset.accepted) {
-      notify("採用済みの音声がありません", "error");
-      return;
-    }
+  };
+
+  const createTrainingJob = async () => {
+    setTrainingVramWarning(null);
     setBusy(true);
     try {
       const created = await api.createTrainingJob({
@@ -595,6 +639,35 @@ export function TrainingWorkspace({
     } finally {
       setBusy(false);
     }
+  };
+
+  const startTraining = () => {
+    if (!name.trim()) {
+      notify("モデル名を入力してください", "error");
+      return;
+    }
+    if (!selectedDataset) {
+      notify("学習データセットを選択してください", "error");
+      return;
+    }
+    if (!selectedDataset.accepted) {
+      notify("採用済みの音声がありません", "error");
+      return;
+    }
+
+    const warning = getTrainingVramWarning({
+      method,
+      device,
+      precision,
+      totalVramGb: bootstrap?.model?.cuda?.total_gb,
+      recommendedVramGb: bootstrap?.training_requirements?.recommended_vram_gb,
+    });
+    if (warning) {
+      setTrainingVramWarning(warning);
+      return;
+    }
+
+    void createTrainingJob();
   };
 
   const stopTraining = async (job) => {
@@ -747,9 +820,15 @@ export function TrainingWorkspace({
                   <div className="training-dataset-origin">
                     <span><MicrophoneStage size={16} />コーパス録音 {corpusCount}件</span>
                     <span><FileAudio size={16} />音声ファイル {importedCount}件</span>
-                    {recordings.length > 0 && <button type="button" onClick={() => setShowReview(true)}>
-                      内容を確認{reviewCount > 0 && <em>{reviewCount}</em>}
-                    </button>}
+                    <span className="training-dataset-tools">
+                      {recordings.length > 0 && <button className="training-review-open" type="button" onClick={() => setShowReview(true)}>
+                        内容を確認{reviewCount > 0 && <em>{reviewCount}</em>}
+                      </button>}
+                      <IconButton
+                        label={`${selectedDataset.name}の音声前処理履歴を管理`}
+                        onClick={() => setShowImportHistory(true)}
+                      ><ClockCounterClockwise size={18} /></IconButton>
+                    </span>
                   </div>
                 </>}
 
@@ -802,6 +881,19 @@ export function TrainingWorkspace({
                     <strong>前処理が完了しています</strong>
                     <span>{selectedDatasetImport.committed?.imported || 0}件追加 · {selectedDatasetImport.committed?.skipped || 0}件スキップ</span>
                   </div>
+                </div>}
+
+                {!activeImportJob && RESUMABLE_IMPORT_STATUSES.has(selectedDatasetImport?.status) && <div className="training-import-result problem">
+                  <WarningCircle size={21} weight="fill" />
+                  <div>
+                    <strong>{importStatusLabel(selectedDatasetImport.status)}</strong>
+                    <span>{selectedDatasetImport.failure?.summary || selectedDatasetImport.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={Boolean(activeJob || busy)}
+                    onClick={() => resumeImport(selectedDatasetImport)}
+                  ><Play size={16} weight="fill" />続きから再開</button>
                 </div>}
 
                 <div className="training-preprocessing-note">
@@ -878,6 +970,9 @@ export function TrainingWorkspace({
                 <label><span>デバイス</span><select value={device} onChange={(event) => setDevice(event.target.value)}>{(bootstrap?.devices || ["cuda", "cpu"]).map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label><span>精度</span><select value={precision} onChange={(event) => setPrecision(event.target.value)}>{(bootstrap?.precisions?.[device] || ["bf16", "fp32"]).map((item) => <option key={item}>{item}</option>)}</select></label>
                 <label><span>学習ステップ</span><input type="number" min="1" max="1000000" value={maxSteps} onChange={(event) => setMaxSteps(Number(event.target.value))} /></label>
+                <p className="training-step-guidance">
+                  {method === "speaker_inversion" ? <><strong>既定は500 stepです。</strong> より高品質を求める場合は1000 step以上を目安にしてください。</> : <><strong>既定は1,500 stepです。</strong> 高品質・追い込みでは3,000 stepを目安にしてください。</>}
+                </p>
               </div>}
             </section>
 
@@ -897,6 +992,10 @@ export function TrainingWorkspace({
             </div>
             <div className="training-progress"><span style={{ width: `${activeJob.progress || 0}%` }} /></div>
             <div className="training-progress-meta"><span>{activeJob.stage === "preparing" ? "音声を調整中" : `${Number(activeJob.step || 0).toLocaleString()} / ${Number(activeJob.max_steps || 0).toLocaleString()} steps`}</span><strong>{activeJob.progress || 0}%</strong></div>
+            <div className="training-time-estimate" aria-label="学習時間の目安">
+              <span>残り時間 <strong>{formatTrainingEstimate(activeJob.training_timing).remaining}</strong></span>
+              <span>全体時間 <strong>{formatTrainingEstimate(activeJob.training_timing).total}</strong></span>
+            </div>
             <p>{activeJob.message}</p>
             <button type="button" onClick={() => stopTraining(activeJob)} disabled={activeJob.status === "cancelling"}><Stop size={18} weight="fill" />学習を停止</button>
           </article>}
@@ -940,6 +1039,63 @@ export function TrainingWorkspace({
         playbackVolume={playbackVolume}
         outputDeviceId={outputDeviceId}
       />}
+
+      {showImportHistory && selectedDataset && <Modal
+        title={`${selectedDataset.name}の前処理履歴`}
+        eyebrow="AUDIO PREPROCESSING"
+        onClose={() => setShowImportHistory(false)}
+        wide
+        scrollable
+      >
+        <div className="training-import-history-intro">
+          <ClockCounterClockwise size={22} />
+          <div>
+            <strong>失敗・中断した処理は続きから再開できます</strong>
+            <span>保存済みの分割音声と文字起こしを再利用します。履歴を削除しても、データセットへ確定済みのWAVとRAW原本は残ります。</span>
+          </div>
+        </div>
+        <div className="training-import-history-list">
+          {selectedDatasetImports.map((job) => {
+            const resumable = RESUMABLE_IMPORT_STATUSES.has(job.status);
+            const active = ACTIVE_IMPORT_STATUSES.has(job.status);
+            const sourceCount = job.sources?.length || job.report?.source_count || 0;
+            return <article key={job.id} className={`training-import-history-item ${job.status}`}>
+              <span className="training-import-history-icon">
+                {job.status === "completed" && <CheckCircle size={22} weight="fill" />}
+                {job.status === "failed" && <WarningCircle size={22} weight="fill" />}
+                {job.status !== "completed" && job.status !== "failed" && <ClockCounterClockwise size={22} />}
+              </span>
+              <div className="training-import-history-copy">
+                <span>
+                  <strong>{importStatusLabel(job.status)}</strong>
+                  {Number(job.attempt || 1) > 1 && <small>再開 {Number(job.attempt) - 1}回</small>}
+                </span>
+                <p>{job.failure?.summary || job.message}</p>
+                {job.failure?.action && <span className="training-import-recovery">{job.failure.action}</span>}
+                <small>
+                  {formatDate(job.completed_at || job.updated_at)} · 素材 {sourceCount}件 · 抽出 {Number(job.candidate_count || 0).toLocaleString()}件 · 自動採用 {Number(job.accepted_count || 0).toLocaleString()}件
+                </small>
+                {job.report?.reused_candidate_count > 0 && <em>保存済み {Number(job.report.reused_candidate_count).toLocaleString()}件を再利用</em>}
+                {active && <div className="training-progress"><span style={{ width: `${Number(job.percent || 0)}%` }} /></div>}
+              </div>
+              <span className="training-import-history-actions">
+                {active && <IconButton label="音声の前処理を停止" tone="danger" disabled={job.status === "cancelling"} onClick={() => cancelImport(job)}><Stop size={17} weight="fill" /></IconButton>}
+                {resumable && <IconButton
+                  label="保存済みの処理結果から再開"
+                  disabled={Boolean(activeImportJob || activeJob || busy)}
+                  onClick={() => resumeImport(job)}
+                ><Play size={16} weight="fill" /></IconButton>}
+                {!active && <IconButton label="音声前処理の履歴を削除" tone="danger" onClick={() => setDeleteImportJobTarget(job)}><Trash size={17} /></IconButton>}
+              </span>
+            </article>;
+          })}
+          {!selectedDatasetImports.length && <div className="training-import-history-empty">
+            <FileAudio size={30} />
+            <strong>前処理履歴はまだありません</strong>
+            <span>複数の音声ファイルを選ぶと、実行結果をここで管理できます。</span>
+          </div>}
+        </div>
+      </Modal>}
 
       {showCreateDataset && <NameDialog
         title="学習データセットを作成"
@@ -1002,6 +1158,17 @@ export function TrainingWorkspace({
         busy={busy}
       />}
 
+      {trainingVramWarning && <ConfirmDialog
+        title="VRAMが不足する可能性があります"
+        eyebrow="TRAINING PREFLIGHT"
+        description={`このGPUのVRAMは${trainingVramWarning.totalVramGb.toFixed(1)} GBです。現在の${methodLabel(trainingVramWarning.method)}設定は${trainingVramWarning.recommendedVramGb} GB以上を推奨しており、共有メモリへの退避で極端に遅くなるか、学習を開始できない可能性があります。${trainingVramWarning.method === "lora" ? "Speaker Inversionへの変更も検討してください。" : "他のGPU処理を終了するか、設定を見直してください。"}`}
+        confirmLabel="それでも開始"
+        danger={false}
+        onConfirm={createTrainingJob}
+        onClose={() => setTrainingVramWarning(null)}
+        busy={busy}
+      />}
+
       {restartJobTarget && <ConfirmDialog
         title={`「${restartJobTarget.name}」を最初からやり直しますか？`}
         eyebrow="RESTART TRAINING"
@@ -1044,6 +1211,15 @@ export function TrainingWorkspace({
         description="学習ログと一時ファイルを削除します。完成済みの学習済みモデルは削除されません。"
         onConfirm={() => deleteJob(deleteJobTarget)}
         onClose={() => setDeleteJobTarget(null)}
+        busy={busy}
+      />}
+
+      {deleteImportJobTarget && <ConfirmDialog
+        title="この音声前処理履歴を削除しますか？"
+        eyebrow="DELETE PREPROCESSING HISTORY"
+        description="履歴と再開用の一時ファイルだけを削除します。学習データセットへ確定済みのWAVとRAW原本は削除しません。"
+        onConfirm={() => deleteImportJob(deleteImportJobTarget)}
+        onClose={() => setDeleteImportJobTarget(null)}
         busy={busy}
       />}
     </>

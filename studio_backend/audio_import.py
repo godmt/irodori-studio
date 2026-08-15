@@ -4,8 +4,6 @@ import gc
 import hashlib
 import json
 import math
-import re
-import unicodedata
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -16,6 +14,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from studio_backend.text_utils import normalize_training_text
 from studio_backend.time_utils import utc_now
 
 ASR_SAMPLE_RATE = 16_000
@@ -35,10 +34,7 @@ class SpeechRange:
 
 
 def normalize_transcript(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    japanese = r"\u3040-\u30ff\u3400-\u9fff\u3000-\u303f"
-    return re.sub(rf"(?<=[{japanese}]) (?=[{japanese}])", "", text)
+    return normalize_training_text(text)
 
 
 def meaningful_character_count(text: str) -> int:
@@ -420,6 +416,29 @@ class LongAudioImportProcessor:
         if not sources:
             raise ValueError("取り込む音声ファイルを1件以上指定してください")
 
+        reusable_candidates: dict[str, dict[str, Any]] = {}
+        if bool(config.get("resume_existing")) and candidates_path.is_file():
+            for line in candidates_path.read_text(
+                encoding="utf-8", errors="ignore"
+            ).splitlines():
+                try:
+                    candidate = json.loads(line)
+                    candidate_id = str(candidate["id"])
+                    clip = clips_directory / Path(str(candidate["audio_file"])).name
+                    if clip.is_file() and clip.stat().st_size > 0:
+                        reusable_candidates[candidate_id] = candidate
+                except (OSError, TypeError, KeyError, ValueError, json.JSONDecodeError):
+                    continue
+            checkpoint = candidates_path.with_suffix(".resume.tmp")
+            checkpoint.write_text(
+                "".join(
+                    f"{json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}\n"
+                    for candidate in reusable_candidates.values()
+                ),
+                encoding="utf-8",
+            )
+            checkpoint.replace(candidates_path)
+
         source_reports: list[dict[str, Any]] = []
         total_selected_seconds = 0.0
         for source in sources:
@@ -450,9 +469,12 @@ class LongAudioImportProcessor:
 
         candidates: list[dict[str, Any]] = []
         candidate_ids: set[str] = set()
+        reused_candidates = 0
         processed_seconds = 0.0
         rejection_reasons: Counter[str] = Counter()
-        with candidates_path.open("w", encoding="utf-8", newline="\n") as candidate_file:
+        with candidates_path.open(
+            "a" if reusable_candidates else "w", encoding="utf-8", newline="\n"
+        ) as candidate_file:
             for source_index, source in enumerate(source_reports, start=1):
                 source_path = Path(source["path"])
                 selection_start = float(source["selection_start_seconds"])
@@ -461,6 +483,16 @@ class LongAudioImportProcessor:
                 overlap_seconds = float(settings["window_overlap_seconds"])
                 core_start = selection_start
                 source_candidate_start = len(candidates)
+                source_identity = "|".join(
+                    (
+                        str(source_path).casefold(),
+                        str(source.get("size_bytes") or 0),
+                        str(source.get("modified_ns") or 0),
+                    )
+                )
+                source_fingerprint = hashlib.sha256(
+                    source_identity.encode("utf-8")
+                ).hexdigest()[:12]
                 while core_start < selection_end:
                     core_end = min(selection_end, core_start + window_seconds)
                     decode_start = max(selection_start, core_start - overlap_seconds)
@@ -478,6 +510,21 @@ class LongAudioImportProcessor:
                         absolute_end = decode_start + speech.end
                         midpoint = (absolute_start + absolute_end) / 2.0
                         if midpoint < core_start or midpoint >= core_end:
+                            continue
+                        start_ms = max(0, round(absolute_start * 1000.0))
+                        end_ms = max(start_ms + 1, round(absolute_end * 1000.0))
+                        candidate_id = (
+                            f"import_{source_fingerprint}_{start_ms:010d}_{end_ms:010d}"
+                        )
+                        if candidate_id in candidate_ids:
+                            continue
+                        candidate_ids.add(candidate_id)
+                        reusable = reusable_candidates.get(candidate_id)
+                        if reusable is not None:
+                            candidates.append(reusable)
+                            reused_candidates += 1
+                            for reason in reusable.get("rejection_reasons") or []:
+                                rejection_reasons[str(reason)] += 1
                             continue
                         asr_left = max(0, int(math.floor(speech.start * ASR_SAMPLE_RATE)))
                         asr_right = min(
@@ -511,24 +558,6 @@ class LongAudioImportProcessor:
                             metrics=metrics,
                             settings=settings,
                         )
-                        source_identity = "|".join(
-                            (
-                                str(source_path).casefold(),
-                                str(source.get("size_bytes") or 0),
-                                str(source.get("modified_ns") or 0),
-                            )
-                        )
-                        source_fingerprint = hashlib.sha256(
-                            source_identity.encode("utf-8")
-                        ).hexdigest()[:12]
-                        start_ms = max(0, round(absolute_start * 1000.0))
-                        end_ms = max(start_ms + 1, round(absolute_end * 1000.0))
-                        candidate_id = (
-                            f"import_{source_fingerprint}_{start_ms:010d}_{end_ms:010d}"
-                        )
-                        if candidate_id in candidate_ids:
-                            continue
-                        candidate_ids.add(candidate_id)
                         clip_name = f"{candidate_id}.flac"
                         sf.write(
                             clips_directory / clip_name,
@@ -593,6 +622,16 @@ class LongAudioImportProcessor:
                     core_start = core_end
                 source["candidate_count"] = len(candidates) - source_candidate_start
 
+        canonical_candidates = candidates_path.with_suffix(".complete.tmp")
+        canonical_candidates.write_text(
+            "".join(
+                f"{json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}\n"
+                for candidate in candidates
+            ),
+            encoding="utf-8",
+        )
+        canonical_candidates.replace(candidates_path)
+
         accepted = [candidate for candidate in candidates if candidate["accepted"]]
         report = {
             "schema_version": 1,
@@ -604,6 +643,7 @@ class LongAudioImportProcessor:
             "source_count": len(source_reports),
             "source_duration_seconds": total_selected_seconds,
             "candidate_count": len(candidates),
+            "reused_candidate_count": reused_candidates,
             "accepted_count": len(accepted),
             "needs_review_count": len(candidates) - len(accepted),
             "accepted_duration_seconds": sum(float(item["duration"]) for item in accepted),

@@ -73,6 +73,7 @@ export const api = {
   createAudioImportJob: (payload) => request("/api/audio-import-jobs", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
   audioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}`).then((response) => response.json()),
   cancelAudioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }).then((response) => response.json()),
+  resumeAudioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}/resume`, { method: "POST" }).then((response) => response.json()),
   deleteAudioImportJob: (id) => request(`/api/audio-import-jobs/${encodeURIComponent(id)}`, { method: "DELETE" }).then((response) => response.json()),
   trainingJobs: () => request("/api/training-jobs").then((response) => response.json()),
   trainedModels: () => request("/api/trained-models").then((response) => response.json()),

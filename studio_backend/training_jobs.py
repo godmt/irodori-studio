@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -18,6 +19,7 @@ from studio_backend.dataset_preprocessing import (
     sha256_file,
     valid_dataset_wav,
 )
+from studio_backend.process_utils import isolated_process_kwargs, terminate_process_tree
 from studio_backend.time_utils import utc_now
 
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$")
@@ -26,6 +28,18 @@ _LOSS_PATTERN = re.compile(r"loss=([0-9.eE+-]+)")
 _SPEAKER_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_(\d+)\.speaker\.safetensors$")
 _LORA_CHECKPOINT_PATTERN = re.compile(r"^checkpoint_(\d+)$")
 ACTIVE_TRAINING_STATUSES = {"queued", "preparing", "training", "cancelling"}
+TRAINING_RECOMMENDED_VRAM_GB = {
+    "speaker_inversion": {
+        "bf16": 12,
+        "fp16": 12,
+        "fp32": 16,
+    },
+    "lora": {
+        "bf16": 24,
+        "fp16": 24,
+        "fp32": 32,
+    },
+}
 
 
 class TrainingJobError(RuntimeError):
@@ -52,6 +66,40 @@ class TrainingJobError(RuntimeError):
 def _safe_slug(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_-]+", "-", value.strip()).strip("-_")
     return (normalized or "model")[:64]
+
+
+def estimate_training_timing(
+    *, start_step: int, current_step: int, max_steps: int, elapsed_seconds: float
+) -> dict[str, Any] | None:
+    """Estimate duration from steps observed during the current trainer process."""
+
+    observed_steps = current_step - start_step
+    if observed_steps <= 0 or max_steps <= 0 or elapsed_seconds <= 0:
+        return None
+    seconds_per_step = elapsed_seconds / observed_steps
+    return {
+        "observed_steps": observed_steps,
+        "seconds_per_step": round(seconds_per_step, 6),
+        "estimated_remaining_seconds": round(
+            max(0, max_steps - current_step) * seconds_per_step, 1
+        ),
+        "estimated_total_seconds": round(max_steps * seconds_per_step, 1),
+        "confidence": "warming_up" if observed_steps < 10 else "estimated",
+        "updated_at": utc_now(),
+    }
+
+
+def lora_schedule_steps(max_steps: int) -> dict[str, int]:
+    """Scale the upstream 30k-step WSD phases to a Studio-sized LoRA run."""
+
+    total = max(1, int(max_steps))
+    warmup = round(total / 30)
+    stable = min(round(total * 0.8), total - warmup)
+    return {
+        "warmup_steps": warmup,
+        "stable_steps": stable,
+        "decay_steps": total - warmup - stable,
+    }
 
 
 class TrainingJobManager:
@@ -174,6 +222,14 @@ class TrainingJobManager:
             "speaker_embeddings": "workspace/models/speaker-embeddings",
             "lora_adapters": "workspace/models/lora",
             "training_jobs": "workspace/training",
+        }
+
+    def requirements(self) -> dict[str, Any]:
+        return {
+            "recommended_vram_gb": {
+                method: dict(precisions)
+                for method, precisions in TRAINING_RECOMMENDED_VRAM_GB.items()
+            },
         }
 
     def models(self) -> list[dict[str, Any]]:
@@ -643,6 +699,8 @@ class TrainingJobManager:
             "step": 0,
             "progress": 0,
             "loss": None,
+            "training_started_at": None,
+            "training_timing": None,
             "message": "学習開始を待っています",
             "created_at": created_at,
             "updated_at": created_at,
@@ -791,6 +849,18 @@ class TrainingJobManager:
                 "--no-wandb",
                 "--no-progress",
             ]
+            if job["method"] == "lora":
+                schedule = lora_schedule_steps(job["max_steps"])
+                train_command.extend(
+                    [
+                        "--lr-scheduler",
+                        "wsd",
+                        "--warmup-steps",
+                        str(schedule["warmup_steps"]),
+                        "--stable-steps",
+                        str(schedule["stable_steps"]),
+                    ]
+                )
             if resume_checkpoint is not None:
                 if job["method"] == "speaker_inversion":
                     train_command.extend(
@@ -845,6 +915,8 @@ class TrainingJobManager:
                     status="training",
                     stage="training",
                     message="モデルを学習しています",
+                    training_started_at=utc_now(),
+                    training_timing=None,
                 )
                 run_output_directory.mkdir(parents=True, exist_ok=True)
                 self._execute(job_id, train_command, log, stage="training")
@@ -907,6 +979,8 @@ class TrainingJobManager:
     ) -> None:
         environment = os.environ.copy()
         environment["PYTHONUNBUFFERED"] = "1"
+        timing_baseline_step: int | None = None
+        timing_baseline_at: float | None = None
         process = subprocess.Popen(
             command,
             cwd=self.irodori_root,
@@ -917,11 +991,7 @@ class TrainingJobManager:
             errors="replace",
             bufsize=1,
             env=environment,
-            creationflags=(
-                subprocess.CREATE_NO_WINDOW
-                if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW")
-                else 0
-            ),
+            **isolated_process_kwargs(hide_window=True),
         )
         with self._lock:
             self._processes[job_id] = process
@@ -945,6 +1015,19 @@ class TrainingJobManager:
                             round(step / max(1, int(job["max_steps"])) * 100, 1),
                         ),
                     )
+                    now = time.monotonic()
+                    if timing_baseline_step is None or step < timing_baseline_step:
+                        timing_baseline_step = step
+                        timing_baseline_at = now
+                    elif timing_baseline_at is not None:
+                        timing = estimate_training_timing(
+                            start_step=timing_baseline_step,
+                            current_step=step,
+                            max_steps=int(job["max_steps"]),
+                            elapsed_seconds=now - timing_baseline_at,
+                        )
+                        if timing is not None:
+                            patch["training_timing"] = timing
                 if loss_match:
                     patch["loss"] = float(loss_match.group(1))
                 if patch:
@@ -989,9 +1072,7 @@ class TrainingJobManager:
             )
             self._write(job)
             process = self._processes.get(job_id)
-            if process and process.poll() is None:
-                process.terminate()
-            elif job.get("stage") == "queued":
+            if (process is None or process.poll() is not None) and job.get("stage") == "queued":
                 job.update(
                     status="cancelled",
                     stage="cancelled",
@@ -999,7 +1080,10 @@ class TrainingJobManager:
                     completed_at=utc_now(),
                 )
                 self._write(job)
-            return self._summary(job)
+
+        if process is not None and process.poll() is None:
+            terminate_process_tree(process)
+        return self._summary(self._read(job_id))
 
     def resume(
         self, job_id: str, *, overwrite_existing: bool = False
@@ -1045,6 +1129,8 @@ class TrainingJobManager:
                 step=step,
                 progress=progress,
                 loss=loss,
+                training_started_at=None,
+                training_timing=None,
                 asset_path=None,
                 failure=None,
                 updated_at=utc_now(),

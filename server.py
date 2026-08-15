@@ -104,7 +104,7 @@ voicevox_runtime: dict[str, Any] = {
     "port": 50021,
 }
 gpu_job_launch_lock = threading.RLock()
-app = FastAPI(title="Irodori Studio Local API", version="0.2.0")
+app = FastAPI(title="Irodori Studio Local API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -203,6 +203,7 @@ def bootstrap() -> dict[str, Any]:
         "training_jobs": training_job_manager.list(),
         "trained_models": training_job_manager.models(),
         "training_paths": training_job_manager.paths(),
+        "training_requirements": training_job_manager.requirements(),
         "voicevox_api": dict(voicevox_runtime),
         "irodori_root": str(IRODORI_ROOT),
     }
@@ -506,6 +507,21 @@ def cancel_audio_import_job(job_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="音声前処理ジョブが見つかりません") from exc
 
 
+@app.post("/api/audio-import-jobs/{job_id}/resume", status_code=202)
+def resume_audio_import_job(job_id: str) -> dict[str, Any]:
+    try:
+        with gpu_job_launch_lock:
+            if training_job_manager.has_active_job():
+                raise ValueError("学習が完了または停止してから音声の前処理を再開してください")
+            if engine.status().get("loaded"):
+                engine.unload_model()
+            return audio_import_job_manager.resume(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="音声前処理ジョブが見つかりません") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.delete("/api/audio-import-jobs/{job_id}")
 def delete_audio_import_job(job_id: str) -> dict[str, bool]:
     try:
@@ -729,6 +745,12 @@ def main() -> None:
     parser.add_argument(
         "--autoload-model", action=argparse.BooleanOptionalAction, default=True
     )
+    parser.add_argument(
+        "--access-log",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show Uvicorn HTTP access logs (disabled by default).",
+    )
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
     voicevox_runtime.update(
@@ -754,6 +776,7 @@ def main() -> None:
                 host=args.voicevox_host,
                 port=args.voicevox_port,
                 log_level="info",
+                access_log=args.access_log,
             )
         )
         threading.Thread(target=compatibility_server.run, daemon=True).start()
@@ -766,7 +789,13 @@ def main() -> None:
     if not args.no_open and args.host in {"127.0.0.1", "localhost"}:
         threading.Timer(1.25, lambda: webbrowser.open(url)).start()
     print(f"[studio] {url}")
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        access_log=args.access_log,
+    )
 
 
 if __name__ == "__main__":

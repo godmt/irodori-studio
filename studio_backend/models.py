@@ -161,7 +161,15 @@ class TrainingJobCreateRequest(NamedRequest):
     checkpoint: str | None = None
     device: str = "cuda"
     precision: Literal["fp32", "bf16"] = "bf16"
-    max_steps: int = Field(default=3000, ge=1, le=1_000_000)
+    max_steps: int = Field(default=500, ge=1, le=1_000_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_method_default_steps(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "max_steps" not in value:
+            value = dict(value)
+            value["max_steps"] = 1500 if value.get("method") == "lora" else 500
+        return value
 
     @field_validator("checkpoint", mode="before")
     @classmethod
