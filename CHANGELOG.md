@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added sentence-aware long-text synthesis shared by Script, Live, and the VOICEVOX-compatible runtime: bounded segments are generated sequentially and returned as one WAV, while Live now surfaces playback failures, preserves retry from history, and falls back to the system output when a selected device becomes unavailable.
+- Reduced Recorder tab reopen latency for large learning datasets by caching unchanged recording manifests and summaries, and by excluding long-audio import records from the corpus-recording payload without removing them from Training.
+- Added an allow-listed Windows runtime package with a prebuilt frontend, no Node.js runtime requirement, SHA-256 output, and automatic attachment to newly published GitHub Releases while keeping development documentation and tests in source archives only.
+
 ## 0.3.0 — 2026-08-15
 
 - Added method- and precision-aware CUDA preflight checks for Speaker Inversion and LoRA that warn when physical VRAM is below the recommendation, while allowing an explicit override and leaving the resident model untouched when cancelled.

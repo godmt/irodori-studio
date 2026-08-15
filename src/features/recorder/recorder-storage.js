@@ -51,7 +51,7 @@ export function renameRecordingDataset(datasetId, name) {
 }
 
 export async function loadRecordingDataset(datasetId) {
-  const dataset = await api.recordingDataset(datasetId);
+  const dataset = await api.recordingDataset(datasetId, { corpusOnly: true });
   const recordings = Object.fromEntries(Object.entries(dataset.recordings || {}).map(([promptId, recording]) => [
     promptId,
     {

@@ -40,6 +40,9 @@ class RecordingDatasetStore:
         self.directory = directory.resolve()
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._directory_by_id: dict[str, Path] = {}
+        self._dataset_cache: dict[str, tuple[int, int, dict[str, Any]]] = {}
+        self._summary_cache: dict[Path, tuple[int, int, dict[str, Any]]] = {}
         self._migrate_human_readable_directories()
         self._migrate_imported_flac_clips()
         self._migrate_dataset_audio_pipeline()
@@ -51,6 +54,10 @@ class RecordingDatasetStore:
     def _dataset_directory(self, dataset_id: str) -> Path:
         if not _SAFE_IDENTIFIER.fullmatch(dataset_id):
             raise KeyError(dataset_id)
+        cached = self._directory_by_id.get(dataset_id)
+        if cached is not None and (cached / "dataset.json").is_file():
+            return cached
+        self._directory_by_id.pop(dataset_id, None)
         for manifest in self.directory.glob("*/dataset.json"):
             try:
                 dataset = json.loads(manifest.read_text(encoding="utf-8"))
@@ -59,6 +66,9 @@ class RecordingDatasetStore:
             if dataset.get("id") == dataset_id:
                 path = manifest.parent.resolve()
                 if path.parent == self.directory:
+                    self._directory_by_id[dataset_id] = path
+                    stat = manifest.stat()
+                    self._dataset_cache[dataset_id] = (stat.st_mtime_ns, stat.st_size, dataset)
                     return path
         raise KeyError(dataset_id)
 
@@ -297,7 +307,16 @@ class RecordingDatasetStore:
         path = self._manifest_path(dataset_id)
         if not path.is_file():
             raise KeyError(dataset_id)
-        return json.loads(path.read_text(encoding="utf-8"))
+        stat = path.stat()
+        cached = self._dataset_cache.get(dataset_id)
+        if cached is not None and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            return cached[2]
+        dataset = json.loads(path.read_text(encoding="utf-8"))
+        if dataset.get("id") != dataset_id:
+            raise KeyError(dataset_id)
+        self._directory_by_id[dataset_id] = path.parent.resolve()
+        self._dataset_cache[dataset_id] = (stat.st_mtime_ns, stat.st_size, dataset)
+        return dataset
 
     def _write(self, dataset: dict[str, Any], directory: Path | None = None) -> None:
         directory = directory or self._dataset_directory(str(dataset["id"]))
@@ -309,6 +328,12 @@ class RecordingDatasetStore:
         )
         temporary.replace(path)
         self._write_training_manifest(dataset, directory)
+        dataset_id = str(dataset["id"])
+        resolved_directory = directory.resolve()
+        stat = path.stat()
+        self._directory_by_id[dataset_id] = resolved_directory
+        self._dataset_cache[dataset_id] = (stat.st_mtime_ns, stat.st_size, dataset)
+        self._summary_cache.pop(resolved_directory, None)
 
     def _write_training_manifest(
         self, dataset: dict[str, Any], directory: Path | None = None
@@ -372,6 +397,16 @@ class RecordingDatasetStore:
             "training_manifest": "dataset.jsonl",
         }
 
+    def _cached_summary(self, dataset: dict[str, Any], manifest: Path) -> dict[str, Any]:
+        stat = manifest.stat()
+        directory = manifest.parent.resolve()
+        cached = self._summary_cache.get(directory)
+        if cached is not None and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+            return dict(cached[2])
+        summary = self._summary(dataset, stat.st_mtime, manifest.parent.name)
+        self._summary_cache[directory] = (stat.st_mtime_ns, stat.st_size, summary)
+        return dict(summary)
+
     def list(self) -> list[dict[str, Any]]:
         datasets = []
         with self._lock:
@@ -382,10 +417,24 @@ class RecordingDatasetStore:
             )
             for path in paths:
                 try:
+                    directory = path.parent.resolve()
+                    stat = path.stat()
+                    cached_summary = self._summary_cache.get(directory)
+                    if (
+                        cached_summary is not None
+                        and cached_summary[:2] == (stat.st_mtime_ns, stat.st_size)
+                    ):
+                        datasets.append(dict(cached_summary[2]))
+                        continue
                     payload = json.loads(path.read_text(encoding="utf-8"))
-                    datasets.append(
-                        self._summary(payload, path.stat().st_mtime, path.parent.name)
+                    dataset_id = str(payload["id"])
+                    self._directory_by_id[dataset_id] = directory
+                    self._dataset_cache[dataset_id] = (
+                        stat.st_mtime_ns,
+                        stat.st_size,
+                        payload,
                     )
+                    datasets.append(self._cached_summary(payload, path))
                 except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError):
                     continue
         return datasets
@@ -407,16 +456,23 @@ class RecordingDatasetStore:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "wavs").mkdir(exist_ok=False)
             self._write(dataset, directory)
-        return self._summary(
-            dataset, (directory / "dataset.json").stat().st_mtime, directory.name
-        )
+        return self._cached_summary(dataset, directory / "dataset.json")
 
-    def load(self, dataset_id: str) -> dict[str, Any]:
+    def load(self, dataset_id: str, *, corpus_only: bool = False) -> dict[str, Any]:
         with self._lock:
             dataset = self._read(dataset_id)
             manifest = self._manifest_path(dataset_id)
-            summary = self._summary(dataset, manifest.stat().st_mtime, manifest.parent.name)
-        return {**dataset, **summary}
+            summary = self._cached_summary(dataset, manifest)
+            if corpus_only:
+                recordings = {
+                    prompt_id: deepcopy(recording)
+                    for prompt_id, recording in dataset.get("recordings", {}).items()
+                    if isinstance(recording, dict) and "import" not in recording
+                }
+                payload = {**dataset, "recordings": recordings}
+            else:
+                payload = deepcopy(dataset)
+        return {**payload, **summary}
 
     def rename(self, dataset_id: str, name: str) -> dict[str, Any]:
         with self._lock:
@@ -438,10 +494,10 @@ class RecordingDatasetStore:
                 if moved and target.exists() and not current.exists():
                     target.rename(current)
                 raise
+            if moved:
+                self._summary_cache.pop(current.resolve(), None)
             manifest = target / "dataset.json"
-            return self._summary(
-                dataset, manifest.stat().st_mtime, target.name
-            )
+            return self._cached_summary(dataset, manifest)
 
     def save_recording(
         self,
@@ -736,3 +792,6 @@ class RecordingDatasetStore:
                     (directory / filename).unlink(missing_ok=True)
             else:
                 shutil.rmtree(directory)
+            self._directory_by_id.pop(dataset_id, None)
+            self._dataset_cache.pop(dataset_id, None)
+            self._summary_cache.pop(directory.resolve(), None)

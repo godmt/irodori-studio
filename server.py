@@ -385,9 +385,9 @@ def create_recording_dataset(
 
 
 @app.get("/api/recording-datasets/{dataset_id}")
-def load_recording_dataset(dataset_id: str) -> dict[str, Any]:
+def load_recording_dataset(dataset_id: str, corpus_only: bool = False) -> dict[str, Any]:
     try:
-        return recording_dataset_store.load(dataset_id)
+        return recording_dataset_store.load(dataset_id, corpus_only=corpus_only)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="録音データセットが見つかりません") from exc
     except json.JSONDecodeError as exc:

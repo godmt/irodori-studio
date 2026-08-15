@@ -1,0 +1,64 @@
+name: Build Windows release package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to package, such as v0.4.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install, test, and build the frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Build the allow-listed Windows package
+        shell: pwsh
+        run: .\build-release.ps1 -Version $env:RELEASE_TAG -SkipBuild
+
+      - name: Preserve package as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: irodori-studio-${{ env.RELEASE_TAG }}-windows
+          path: artifacts/*
+          if-no-files-found: error
+
+      - name: Attach package and checksum to the GitHub release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(Get-ChildItem -LiteralPath artifacts -File | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 2) {
+            throw "Expected the ZIP and SHA-256 file, found $($assets.Count) assets."
+          }
+          & gh release upload $env:RELEASE_TAG @assets --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release upload failed with exit code $LASTEXITCODE"
+          }

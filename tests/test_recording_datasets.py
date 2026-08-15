@@ -281,6 +281,64 @@ class RecordingDatasetStoreTests(unittest.TestCase):
             )
             self.assertIn("修正後の文字起こし", manifest)
 
+    def test_recorder_load_excludes_long_audio_imports_without_changing_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            clips = root / "clips"
+            clips.mkdir()
+            store = RecordingDatasetStore(root / "recordings")
+            dataset_id = store.create("共通データセット")["id"]
+            store.save_recording(
+                dataset_id,
+                "irodori_v2_0001",
+                empty_wav(),
+                {"accepted": True, "prompt": {"text": "コーパス録音です。"}},
+            )
+            clip = clips / "import_stable_0001.flac"
+            sf.write(clip, np.zeros(48_000, dtype=np.float32), 48_000, format="FLAC")
+            store.commit_import(
+                dataset_id,
+                [
+                    {
+                        "id": "import_stable_0001",
+                        "audio_file": clip.name,
+                        "text": "長尺音声からの取り込みです。",
+                        "accepted": True,
+                    }
+                ],
+                clips,
+                import_job_id="job",
+            )
+
+            complete = store.load(dataset_id)
+            recorder = store.load(dataset_id, corpus_only=True)
+
+            self.assertEqual(set(complete["recordings"]), {"irodori_v2_0001", "import_stable_0001"})
+            self.assertEqual(set(recorder["recordings"]), {"irodori_v2_0001"})
+            self.assertEqual(recorder["recorded"], 2)
+            self.assertEqual(recorder["accepted"], 2)
+
+    def test_dataset_cache_observes_manifest_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = RecordingDatasetStore(root)
+            created = store.create("外部更新")
+            dataset_id = created["id"]
+            manifest = root / "外部更新" / "dataset.json"
+
+            self.assertEqual(store.list()[0]["recorded"], 0)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["recordings"]["external_0001"] = {
+                "prompt_id": "external_0001",
+                "audio": "wavs/external_0001.wav",
+                "accepted": False,
+                "prompt": {"text": "外部更新"},
+            }
+            manifest.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            self.assertEqual(store.list()[0]["recorded"], 1)
+            self.assertIn("external_0001", store.load(dataset_id)["recordings"])
+
     def test_import_defaults_to_skip_and_explicitly_overwrites_existing_wav(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

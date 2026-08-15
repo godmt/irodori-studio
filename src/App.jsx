@@ -75,6 +75,11 @@ import {
   updateLine,
 } from "./project-state.js";
 import {
+  playbackFailureMessage,
+  shouldRetryWithSystemOutput,
+  SILENT_PLAYBACK_PRIMER,
+} from "./playback.js";
+import {
   mergeVoiceLibrary,
   voiceFingerprint,
   voicePersistenceError,
@@ -335,6 +340,7 @@ function App() {
   const audioRef = useRef(null);
   const playbackResolveRef = useRef(null);
   const playbackCleanupRef = useRef(null);
+  const playbackPrimedRef = useRef(false);
   const sequenceTokenRef = useRef(0);
   const generationPromisesRef = useRef(new Map());
   const liveQueueRef = useRef([]);
@@ -905,6 +911,25 @@ function App() {
     setSpeakingLineId(null);
   }, []);
 
+  const primePlayback = useCallback(() => {
+    if (playbackPrimedRef.current) return;
+    const primer = new Audio(SILENT_PLAYBACK_PRIMER);
+    const attempt = primer.play();
+    if (!attempt) {
+      playbackPrimedRef.current = true;
+      return;
+    }
+    attempt.then(() => {
+      playbackPrimedRef.current = true;
+      primer.pause();
+      primer.removeAttribute("src");
+      primer.load();
+    }).catch(() => {
+      primer.removeAttribute("src");
+      primer.load();
+    });
+  }, []);
+
   const changeLineVoice = useCallback((lineId, voiceId) => {
     if (speakingLineId === lineId) stopPlayback();
     setSelectedLineId(lineId);
@@ -934,29 +959,62 @@ function App() {
       audio.removeEventListener("ended", finish);
       audio.removeEventListener("error", fail);
     };
+    let settled = false;
     const finish = () => {
+      if (settled) return;
+      settled = true;
       cleanup();
       setSpeakingLineId(null);
       playbackCleanupRef.current = null;
       playbackResolveRef.current = null;
       resolve(true);
     };
-    const fail = () => {
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       setSpeakingLineId(null);
       playbackCleanupRef.current = null;
       playbackResolveRef.current = null;
-      reject(new Error("音声を再生できませんでした"));
+      const cause = typeof error?.name === "string" || typeof error?.message === "string"
+        ? error
+        : audio.error;
+      reject(new Error(playbackFailureMessage(cause)));
     };
     audio.addEventListener("ended", finish, { once: true });
     audio.addEventListener("error", fail, { once: true });
     playbackCleanupRef.current = cleanup;
     playbackResolveRef.current = resolve;
-    audio.play().catch(fail);
-  }), []);
+    audio.load();
+    const beginPlayback = async () => {
+      try {
+        await audio.play();
+        playbackPrimedRef.current = true;
+      } catch (error) {
+        if (shouldRetryWithSystemOutput(error, audio.sinkId)) {
+          try {
+            await applyAudioOutput("");
+            rememberAudioOutput({ deviceId: "", label: "システム既定" });
+            setAudioOutputs(normalizeAudioOutputs());
+            setAudioOutputStatus("locked-default");
+            notify("選択中の出力先で再生できないため、システム既定で再試行します", "error");
+            await audio.play();
+            playbackPrimedRef.current = true;
+            return;
+          } catch (fallbackError) {
+            fail(fallbackError);
+            return;
+          }
+        }
+        fail(error);
+      }
+    };
+    beginPlayback();
+  }), [applyAudioOutput, notify, rememberAudioOutput]);
 
   const playLine = useCallback(async (lineId) => {
     try {
+      primePlayback();
       setSelectedLineId(lineId);
       let line = projectRef.current.lines.find((item) => item.id === lineId);
       if (!line?.audioFile || line.stale) {
@@ -967,10 +1025,11 @@ function App() {
     } catch (error) {
       notify(error.message, "error");
     }
-  }, [generateLine, notify, playAudio]);
+  }, [generateLine, notify, playAudio, primePlayback]);
 
   const playFrom = useCallback(async (startLineId) => {
     stopPlayback();
+    primePlayback();
     const token = sequenceTokenRef.current;
     setSequenceActive(true);
     const startIndex = Math.max(0, projectRef.current.lines.findIndex((line) => line.id === startLineId));
@@ -996,7 +1055,7 @@ function App() {
         setSpeakingLineId(null);
       }
     }
-  }, [generateLine, notify, playAudio, stopPlayback]);
+  }, [generateLine, notify, playAudio, primePlayback, stopPlayback]);
 
   const generateAllMissing = useCallback(async () => {
     const targets = projectRef.current.lines.filter((line) => !line.audioFile || line.stale);
@@ -1292,6 +1351,7 @@ function App() {
   const enqueueLive = useCallback((text) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    primePlayback();
     const item = {
       id: uid("live"),
       text: trimmed,
@@ -1338,12 +1398,13 @@ function App() {
             await playAudio(result.audio_file, next.id);
           } catch (error) {
             setLiveItems((current) => current.map((entry) => entry.id === next.id ? { ...entry, status: "failed", error: error.message } : entry));
+            notify(error.message, "error");
           }
         }
         livePumpingRef.current = false;
       })();
     }
-  }, [buildPayload, liveCaption, livePreset, liveVoiceId, playAudio, submitSynthesis]);
+  }, [buildPayload, liveCaption, livePreset, liveVoiceId, notify, playAudio, primePlayback, submitSynthesis]);
 
   const stopLive = useCallback(async () => {
     liveQueueRef.current = [];

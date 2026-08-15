@@ -16,6 +16,7 @@ StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTS�
 - Speaker Inversion、複数参照音声、参照なし、LoRAをボイスとして保存
 - 指定行からの連続生成・再生
 - 配信用FIFOキュー、自動再生、停止、再生音量、OBS向け音声出力デバイス選択
+- 台本制作・配信・VOICEVOX互換APIに共通する長文の自動分割生成と、一つの音声への自動連結
 - Irodori Starter 120／AICA Character Core 200／AICA Full 500の段階切り換え、波形・音量確認、試聴、採用、録り直し、進捗管理
 - 名前付き学習データセットの作成・選択・名前変更・削除と、学習用メタデータの自動保存
 - 学習タブから複数の長尺音声を選択し、一定量ずつ分割・文字起こし・自動採用して学習データセットへ追加する前処理
@@ -23,15 +24,21 @@ StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTS�
 - VOICEVOX互換APIと永続するSpeaker/Style ID
 - 行別WAV、master WAV、SRT、VTT、CSV、JSON、FFmpeg concat listのZIP書き出し
 
+## 入手方法
+
+通常利用では、[Releases](https://github.com/godmt/irodori-studio/releases)に添付される`irodori-studio-vX.Y.Z-windows.zip`を使用してください。ビルド済みSPAを同梱しているため、Node.jsは不要です。GitHubが自動生成する`Source code (zip)`と`Source code (tar.gz)`は、開発文書、テスト、フロントエンドソースを含む開発者向けのソースアーカイブです。
+
+Windowsパッケージと同じ場所にある`.sha256`ファイルで、ダウンロードしたZIPのSHA-256を確認できます。
+
 ## 必要なもの
 
 - Windows 10/11
 - PowerShell 5.1以降
 - [uv](https://docs.astral.sh/uv/)
-- Node.js 20以降
-- Git
 - 別途クローンしたIrodori-TTS
 - 対応GPU、またはCPU実行環境
+
+ソースアーカイブから起動・開発する場合だけ、Node.js 20以降とGitも必要です。Windowsパッケージはビルド済みフロントエンドを使用するため、Node.jsを要求しません。
 
 推奨配置例です。隣接配置は必須ではありません。
 
@@ -62,7 +69,7 @@ cd C:\AI\irodori-studio
 
 1. 保存済みのIrodori-TTSパスを検証
 2. 必要ならIrodori-TTSのuv環境を作成
-3. 必要ならNode依存を導入してSPAをビルド
+3. Windowsパッケージでは同梱SPAを使用し、ソース版では必要に応じてNode依存を導入してビルド
 4. Studio APIを`127.0.0.1:8765`で起動
 5. Irodoriモデルを同じPythonプロセスへバックグラウンドロード
 6. VOICEVOX互換APIを`127.0.0.1:50021`で起動
@@ -190,6 +197,8 @@ CUDAで学習を開始するときはGPUの総VRAMを確認します。現行構
 
 ブラウザーの音声アクセスを許可すると、利用可能なスピーカーや仮想オーディオデバイスが出力先一覧へ追加されます。OBSへ送る場合はVB-CABLEなどの仮想出力を選択します。アクセスを許可しなかった場合、未対応ブラウザーの場合、または選択中のデバイスが外れた場合は、システム既定の出力先を使用します。
 
+長い文章は、句読点に沿った適度な長さへ内部で分けて順番に生成し、一つの音声として再生します。台本や配信文章をユーザーが手作業で分割する必要はありません。配信でブラウザーが自動再生を止めた場合は発話履歴の再生ボタンから再試行でき、選択中の出力先が利用できなくなった場合は通知してシステム既定で再試行します。
+
 ## ローカルデータ
 
 Studio自身の実行データは`workspace/`へ保存します。
@@ -221,7 +230,7 @@ Invoke-WebRequest -Method Post -Uri 'http://127.0.0.1:50021/synthesis?speaker=10
 
 ## 開発
 
-アーキテクチャと開発手順は[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)、設計上の判断は[AGENTS.md](AGENTS.md)、現在の実装状況と今後の候補は[docs/ROADMAP.md](docs/ROADMAP.md)にまとめています。
+アーキテクチャと開発手順は[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)、プロダクトとUI/UXの判断は[DESIGN.md](DESIGN.md)、現在の実装状況と今後の候補は[docs/ROADMAP.md](docs/ROADMAP.md)にまとめています。`AGENTS.md`は、リポジトリ全体の不変条件とこれら正本文書への案内に限定しています。
 
 基本的な検証コマンドです。
 
@@ -238,6 +247,14 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 ```powershell
 .\start-studio.ps1 -NoOpen -NoAutoloadModel -NoVoicevoxApi
 ```
+
+ソースチェックアウトでは、一般ユーザー向けWindowsパッケージを次のコマンドで`artifacts/`へ生成できます。ZIPには許可リストで選んだ実行ファイル、ビルド済みSPA、利用者向け文書とライセンスだけを含め、開発文書、テスト、`src/`、`.github/`は含めません。
+
+```powershell
+.\build-release.ps1
+```
+
+GitHubでReleaseを公開すると、同じ処理がWindows runnerで実行され、ZIPとSHA-256がRelease Assetsへ自動添付されます。
 
 ## セキュリティ
 

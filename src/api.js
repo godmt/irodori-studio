@@ -54,7 +54,7 @@ export const api = {
   deleteProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" }).then((response) => response.json()),
   recordingDatasets: () => request("/api/recording-datasets").then((response) => response.json()),
   createRecordingDataset: (name) => request("/api/recording-datasets", { method: "POST", body: JSON.stringify({ name }) }).then((response) => response.json()),
-  recordingDataset: (id) => request(`/api/recording-datasets/${encodeURIComponent(id)}`).then((response) => response.json()),
+  recordingDataset: (id, { corpusOnly = false } = {}) => request(`/api/recording-datasets/${encodeURIComponent(id)}${corpusOnly ? "?corpus_only=true" : ""}`).then((response) => response.json()),
   renameRecordingDataset: (id, name) => request(`/api/recording-datasets/${encodeURIComponent(id)}/rename`, { method: "POST", body: JSON.stringify({ name }) }).then((response) => response.json()),
   saveDatasetRecording: (datasetId, promptId, blob, metadata) => request(`/api/recording-datasets/${encodeURIComponent(datasetId)}/recordings/${encodeURIComponent(promptId)}`, {
     method: "POST",

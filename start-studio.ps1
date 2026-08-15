@@ -131,8 +131,23 @@ print(backend)
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw "uv was not found. Install it from https://docs.astral.sh/uv/."
 }
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    throw "npm was not found. Install Node.js 20 or later."
+
+$clientIndex = Join-Path $studioRoot "dist\client\index.html"
+$frontendSourceDirectory = Join-Path $studioRoot "src"
+$hasFrontendSource = Test-Path -LiteralPath $frontendSourceDirectory -PathType Container
+if ($hasFrontendSource) {
+    $requiredFrontendFiles = @("index.html", "package.json", "package-lock.json", "vite.config.mjs")
+    foreach ($requiredFrontendFile in $requiredFrontendFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $studioRoot $requiredFrontendFile) -PathType Leaf)) {
+            throw "Frontend source is present, but $requiredFrontendFile is missing. Restore the source checkout before starting Studio."
+        }
+    }
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "npm was not found. Source checkouts require Node.js 20 or later; packaged releases use the bundled frontend without Node.js."
+    }
+}
+elseif (-not (Test-Path -LiteralPath $clientIndex -PathType Leaf)) {
+    throw "The packaged Studio frontend is missing. Download and extract the complete Windows release package again."
 }
 
 $config = Read-StudioConfig
@@ -184,30 +199,34 @@ if ($LASTEXITCODE -ne 0) {
     ) $studioRoot
 }
 
-$nodeModules = Join-Path $studioRoot "node_modules"
-if (-not (Test-Path -LiteralPath $nodeModules -PathType Container)) {
-    Write-Host "[setup] Installing Studio frontend dependencies" -ForegroundColor Cyan
-    Invoke-Checked "npm" @("ci") $studioRoot
-}
+if ($hasFrontendSource) {
+    $nodeModules = Join-Path $studioRoot "node_modules"
+    if (-not (Test-Path -LiteralPath $nodeModules -PathType Container)) {
+        Write-Host "[setup] Installing Studio frontend dependencies" -ForegroundColor Cyan
+        Invoke-Checked "npm" @("ci") $studioRoot
+    }
 
-$clientIndex = Join-Path $studioRoot "dist\client\index.html"
-$needsBuild = -not (Test-Path -LiteralPath $clientIndex -PathType Leaf)
-if (-not $needsBuild) {
-    $buildTime = (Get-Item -LiteralPath $clientIndex).LastWriteTimeUtc
-    $sourcePaths = @(
-        (Join-Path $studioRoot "src"),
-        (Join-Path $studioRoot "index.html"),
-        (Join-Path $studioRoot "package.json"),
-        (Join-Path $studioRoot "vite.config.mjs")
-    )
-    $latestSource = Get-ChildItem -LiteralPath $sourcePaths -Recurse -File |
-        Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -First 1
-    $needsBuild = $null -ne $latestSource -and $latestSource.LastWriteTimeUtc -gt $buildTime
+    $needsBuild = -not (Test-Path -LiteralPath $clientIndex -PathType Leaf)
+    if (-not $needsBuild) {
+        $buildTime = (Get-Item -LiteralPath $clientIndex).LastWriteTimeUtc
+        $sourcePaths = @(
+            $frontendSourceDirectory,
+            (Join-Path $studioRoot "index.html"),
+            (Join-Path $studioRoot "package.json"),
+            (Join-Path $studioRoot "vite.config.mjs")
+        )
+        $latestSource = Get-ChildItem -LiteralPath $sourcePaths -Recurse -File |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+        $needsBuild = $null -ne $latestSource -and $latestSource.LastWriteTimeUtc -gt $buildTime
+    }
+    if ($needsBuild) {
+        Write-Host "[setup] Building the Studio SPA" -ForegroundColor Cyan
+        Invoke-Checked "npm" @("run", "build") $studioRoot
+    }
 }
-if ($needsBuild) {
-    Write-Host "[setup] Building the Studio SPA" -ForegroundColor Cyan
-    Invoke-Checked "npm" @("run", "build") $studioRoot
+else {
+    Write-Host "[setup] Using the bundled Studio frontend" -ForegroundColor Green
 }
 
 Write-Host "[setup] Irodori-TTS: $resolvedIrodoriPath" -ForegroundColor Green

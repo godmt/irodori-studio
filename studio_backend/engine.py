@@ -20,7 +20,12 @@ from irodori_tts.inference_runtime import (
 )
 
 from studio_backend.models import ModelLoadRequest, SynthesisPayload
+from studio_backend.text_segmentation import split_synthesis_text
 from studio_backend.time_utils import utc_now
+
+
+class _SynthesisCancelled(Exception):
+    pass
 
 
 @dataclass
@@ -41,6 +46,8 @@ class SynthesisJob:
     used_seed: int | None = None
     stage_timings: list[tuple[str, float]] = field(default_factory=list)
     runtime_messages: list[str] = field(default_factory=list)
+    segment_count: int = 1
+    segments: list[dict[str, Any]] = field(default_factory=list)
     cancel_requested: bool = False
 
     def public_dict(self) -> dict[str, Any]:
@@ -225,6 +232,19 @@ class StudioEngine:
 
         started = time.perf_counter()
         try:
+            segments = (
+                split_synthesis_text(payload.text)
+                if payload.seconds is None
+                else [payload.text.strip()]
+            )
+            if not segments:
+                raise ValueError("読み上げ文章を入力してください")
+            with self._jobs_lock:
+                job.segment_count = len(segments)
+                if len(segments) > 1:
+                    job.message = f"音声を生成しています (1/{len(segments)})"
+                self._job_condition.notify_all()
+
             with self._runtime_lock:
                 runtime = self._runtime
                 if runtime is None:
@@ -245,58 +265,120 @@ class StudioEngine:
                 if ref_wavs and ref_embed:
                     raise ValueError("Reference audio and speaker embedding cannot be combined")
                 no_ref = bool(payload.no_ref or (not ref_wavs and ref_embed is None))
-                result = runtime.synthesize(
-                    SamplingRequest(
-                        text=payload.text,
-                        caption=payload.caption,
-                        ref_wavs=ref_wavs or None,
-                        ref_embed=ref_embed,
-                        no_ref=no_ref,
-                        num_candidates=1,
-                        decode_mode="sequential",
-                        seconds=payload.seconds,
-                        duration_scale=1.0 / payload.speed,
-                        num_steps=payload.num_steps,
-                        seed=payload.seed,
-                        cfg_guidance_mode=payload.cfg_guidance_mode,
-                        cfg_scale_text=payload.cfg_scale_text,
-                        cfg_scale_caption=payload.cfg_scale_caption,
-                        cfg_scale_speaker=payload.cfg_scale_speaker,
-                        cfg_min_t=payload.cfg_min_t,
-                        cfg_max_t=payload.cfg_max_t,
-                        t_schedule_mode=payload.t_schedule_mode,
-                        sway_coeff=payload.sway_coeff,
-                        truncation_factor=payload.truncation_factor,
-                        rescale_k=payload.rescale_k,
-                        rescale_sigma=payload.rescale_sigma,
-                        speaker_kv_scale=payload.speaker_kv_scale,
-                        speaker_kv_min_t=payload.speaker_kv_min_t,
-                        speaker_kv_max_layers=payload.speaker_kv_max_layers,
-                        context_kv_cache=payload.context_kv_cache,
-                        trim_tail=payload.trim_tail,
-                        lora_adapter=lora_adapter,
-                    )
+                audio_parts: list[torch.Tensor] = []
+                segment_records: list[dict[str, Any]] = []
+                stage_totals: dict[str, float] = {}
+                runtime_messages = (
+                    [f"info: split synthesis into {len(segments)} sentence-aware segments."]
+                    if len(segments) > 1
+                    else []
                 )
+                sample_rate: int | None = None
+                base_seed = int(payload.seed) if payload.seed is not None else None
+
+                for index, segment_text in enumerate(segments):
+                    with self._jobs_lock:
+                        if job.cancel_requested:
+                            raise _SynthesisCancelled
+                    segment_seed = (
+                        None
+                        if base_seed is None
+                        else (base_seed + index) % (2**63 - 1)
+                    )
+                    result = runtime.synthesize(
+                        SamplingRequest(
+                            text=segment_text,
+                            caption=payload.caption,
+                            ref_wavs=ref_wavs or None,
+                            ref_embed=ref_embed,
+                            no_ref=no_ref,
+                            num_candidates=1,
+                            decode_mode="sequential",
+                            seconds=payload.seconds,
+                            duration_scale=1.0 / payload.speed,
+                            num_steps=payload.num_steps,
+                            seed=segment_seed,
+                            cfg_guidance_mode=payload.cfg_guidance_mode,
+                            cfg_scale_text=payload.cfg_scale_text,
+                            cfg_scale_caption=payload.cfg_scale_caption,
+                            cfg_scale_speaker=payload.cfg_scale_speaker,
+                            cfg_min_t=payload.cfg_min_t,
+                            cfg_max_t=payload.cfg_max_t,
+                            t_schedule_mode=payload.t_schedule_mode,
+                            sway_coeff=payload.sway_coeff,
+                            truncation_factor=payload.truncation_factor,
+                            rescale_k=payload.rescale_k,
+                            rescale_sigma=payload.rescale_sigma,
+                            speaker_kv_scale=payload.speaker_kv_scale,
+                            speaker_kv_min_t=payload.speaker_kv_min_t,
+                            speaker_kv_max_layers=payload.speaker_kv_max_layers,
+                            context_kv_cache=payload.context_kv_cache,
+                            trim_tail=payload.trim_tail,
+                            lora_adapter=lora_adapter,
+                        )
+                    )
+                    if base_seed is None:
+                        base_seed = int(result.used_seed)
+                    if sample_rate is None:
+                        sample_rate = int(result.sample_rate)
+                    elif sample_rate != int(result.sample_rate):
+                        raise RuntimeError("分割音声のサンプルレートが一致しません")
+
+                    audio = result.audio.float()
+                    if audio_parts:
+                        gap_samples = max(1, round(sample_rate * 0.16))
+                        audio_parts.append(audio.new_zeros((*audio.shape[:-1], gap_samples)))
+                    audio_parts.append(audio)
+                    segment_duration = audio.shape[-1] / sample_rate
+                    segment_records.append(
+                        {
+                            "index": index + 1,
+                            "text": segment_text,
+                            "duration": segment_duration,
+                            "used_seed": int(result.used_seed),
+                        }
+                    )
+                    for stage, seconds in result.stage_timings:
+                        stage_totals[stage] = stage_totals.get(stage, 0.0) + float(seconds)
+                    prefix = f"[segment {index + 1}/{len(segments)}] " if len(segments) > 1 else ""
+                    runtime_messages.extend(f"{prefix}{message}" for message in result.messages)
+                    with self._jobs_lock:
+                        if job.cancel_requested:
+                            raise _SynthesisCancelled
+                        job.progress = 0.1 + 0.8 * ((index + 1) / len(segments))
+                        job.message = (
+                            f"音声を生成しています ({index + 1}/{len(segments)})"
+                            if len(segments) > 1
+                            else "音声を生成しています"
+                        )
+                        self._job_condition.notify_all()
+
+                if sample_rate is None or not audio_parts:
+                    raise RuntimeError("生成された音声がありません")
+                combined_audio = torch.cat(audio_parts, dim=-1)
+                stage_timings = list(stage_totals.items())
 
             line_stem = str(payload.line_id or "line").replace("/", "-").replace("\\", "-")
             audio_name = f"{line_stem[:48]}-{job_id[:10]}.wav"
             output_path = save_wav(
                 self.audio_dir / audio_name,
-                result.audio.float(),
-                result.sample_rate,
+                combined_audio,
+                sample_rate,
             )
-            duration = result.audio.shape[-1] / result.sample_rate
+            duration = combined_audio.shape[-1] / sample_rate
             metadata = {
                 "job_id": job_id,
                 "line_id": payload.line_id,
                 "text": payload.text,
                 "caption": payload.caption,
                 "audio_file": output_path.name,
-                "sample_rate": result.sample_rate,
+                "sample_rate": sample_rate,
                 "duration": duration,
-                "used_seed": result.used_seed,
-                "stage_timings": result.stage_timings,
-                "runtime_messages": result.messages,
+                "used_seed": base_seed,
+                "segment_count": len(segment_records),
+                "segments": segment_records,
+                "stage_timings": stage_timings,
+                "runtime_messages": runtime_messages,
                 "created_at": utc_now(),
             }
             metadata_path = output_path.with_suffix(".json")
@@ -314,13 +396,21 @@ class StudioEngine:
                     job.progress = 1.0
                     job.message = "生成完了"
                     job.audio_file = output_path.name
-                    job.sample_rate = result.sample_rate
+                    job.sample_rate = sample_rate
                     job.duration = duration
-                    job.used_seed = result.used_seed
-                    job.stage_timings = result.stage_timings
-                    job.runtime_messages = result.messages
+                    job.used_seed = base_seed
+                    job.segments = segment_records
+                    job.stage_timings = stage_timings
+                    job.runtime_messages = runtime_messages
                 job.generation_seconds = time.perf_counter() - started
                 job.finished_at = utc_now()
+                self._job_condition.notify_all()
+        except _SynthesisCancelled:
+            with self._jobs_lock:
+                job.status = "cancelled"
+                job.message = "生成を停止しました"
+                job.finished_at = utc_now()
+                job.generation_seconds = time.perf_counter() - started
                 self._job_condition.notify_all()
         except Exception as exc:
             with self._jobs_lock:
