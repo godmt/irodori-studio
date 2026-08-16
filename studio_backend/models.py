@@ -24,6 +24,15 @@ class ModelLoadRequest(BaseModel):
     compile_dynamic: bool = False
 
 
+class ModelInstallRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=160)
+
+    @field_validator("model_id", mode="before")
+    @classmethod
+    def strip_model_id(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
 class SynthesisPayload(BaseModel):
     line_id: str | None = None
     text: str = Field(min_length=1, max_length=4000)

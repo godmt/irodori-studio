@@ -29,6 +29,7 @@ except RuntimeError as exc:
 if str(IRODORI_ROOT) not in sys.path:
     sys.path.insert(0, str(IRODORI_ROOT))
 
+import torch
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,11 +45,15 @@ from studio_backend.audio_import_jobs import AudioImportJobManager
 from studio_backend.engine import StudioEngine
 from studio_backend.exporter import create_production_zip
 from studio_backend.generated_audio import delete_generated_audio_files
+from studio_backend.inference_settings import InferenceSettingsStore
+from studio_backend.model_catalog import build_model_catalog, standard_checkpoint
+from studio_backend.model_installs import ModelInstallManager
 from studio_backend.models import (
     AudioImportJobCreateRequest,
     AudioReleaseRequest,
     DialogRequest,
     JobResumeRequest,
+    ModelInstallRequest,
     ModelLoadRequest,
     ProductionExportRequest,
     ProfileSynthesisRequest,
@@ -102,13 +107,19 @@ audio_import_job_manager = AudioImportJobManager(
     recording_store=recording_dataset_store,
 )
 voice_profile_store = VoiceProfileStore(VOICE_DIR / "profiles.json")
+inference_settings_store = InferenceSettingsStore(
+    STUDIO_ROOT / ".studio" / "inference.json"
+)
+model_install_manager = ModelInstallManager(irodori_root=IRODORI_ROOT)
 voicevox_runtime: dict[str, Any] = {
     "enabled": True,
     "host": "127.0.0.1",
     "port": 50021,
 }
 gpu_job_launch_lock = threading.RLock()
-app = FastAPI(title="Irodori Studio Local API", version="0.4.1")
+model_notice_lock = threading.RLock()
+model_runtime_notice: str | None = None
+app = FastAPI(title="Irodori Studio Local API", version="0.5.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -131,11 +142,57 @@ def release_generated_audio(
 
 
 def _default_checkpoint() -> str:
-    preferred = IRODORI_ROOT / "models" / "Irodori-TTS-v4.1-Small" / "model.safetensors"
-    if preferred.is_file():
-        return str(preferred.resolve())
-    candidates = sorted((IRODORI_ROOT / "models").glob("**/model.safetensors"))
-    return str(candidates[0].resolve()) if candidates else "Aratako/Irodori-TTS-v4.1-Small"
+    """Return the full-precision base used by training and first-run inference."""
+    return standard_checkpoint(IRODORI_ROOT)
+
+
+def _cuda_capability() -> tuple[int, int] | None:
+    if not torch.cuda.is_available():
+        return None
+    try:
+        return tuple(torch.cuda.get_device_capability())
+    except (AssertionError, RuntimeError):
+        return None
+
+
+def _model_catalog() -> list[dict[str, Any]]:
+    return build_model_catalog(IRODORI_ROOT, cuda_capability=_cuda_capability())
+
+
+def _default_inference_settings() -> dict[str, Any]:
+    device = default_runtime_device()
+    precisions = list_available_runtime_precisions(device)
+    precision = "bf16" if "bf16" in precisions else "fp32"
+    return ModelLoadRequest(
+        checkpoint=_default_checkpoint(),
+        model_device=device,
+        model_precision=precision,
+        codec_device=device,
+        codec_precision=precision,
+    ).model_dump()
+
+
+def _preferred_inference_settings() -> dict[str, Any]:
+    saved = inference_settings_store.load()
+    if saved is not None:
+        try:
+            return ModelLoadRequest.model_validate(saved).model_dump()
+        except ValueError:
+            pass
+    return _default_inference_settings()
+
+
+def _set_model_notice(message: str | None) -> None:
+    global model_runtime_notice
+    with model_notice_lock:
+        model_runtime_notice = message
+
+
+def _model_status() -> dict[str, Any]:
+    status = engine.status()
+    with model_notice_lock:
+        status["notice"] = model_runtime_notice
+    return status
 
 
 def _asset_scan() -> dict[str, list[str]]:
@@ -146,8 +203,16 @@ def _asset_scan() -> dict[str, list[str]]:
     references: list[str] = []
     loras: list[str] = []
     if models_root.exists():
-        checkpoints = [str(path.resolve()) for path in models_root.glob("**/model.safetensors")]
-        checkpoints.extend(str(path.resolve()) for path in models_root.glob("**/checkpoint_*.pt"))
+        checkpoints = [
+            str(path.resolve())
+            for path in models_root.glob("**/model.safetensors")
+            if ".studio-downloads" not in path.parts
+        ]
+        checkpoints.extend(
+            str(path.resolve())
+            for path in models_root.glob("**/checkpoint_*.pt")
+            if ".studio-downloads" not in path.parts
+        )
     if outputs_root.exists():
         for path in outputs_root.glob("**/*.safetensors"):
             lowered = path.name.lower()
@@ -186,7 +251,7 @@ def health() -> dict[str, Any]:
         "ok": True,
         "service": "irodori-studio",
         "irodori_root": str(IRODORI_ROOT),
-        "model": engine.status(),
+        "model": _model_status(),
     }
 
 
@@ -199,8 +264,11 @@ def bootstrap() -> dict[str, Any]:
         "devices": devices,
         "precisions": {device: list_available_runtime_precisions(device) for device in devices},
         "default_device": default_device,
+        "inference_settings": _preferred_inference_settings(),
+        "model_catalog": _model_catalog(),
+        "model_installs": model_install_manager.list(),
         "assets": _asset_scan(),
-        "model": engine.status(),
+        "model": _model_status(),
         "voice_profiles": voice_profile_store.list(),
         "recording_datasets": recording_dataset_store.list(),
         "audio_import_jobs": audio_import_job_manager.list(),
@@ -216,6 +284,35 @@ def bootstrap() -> dict[str, Any]:
 @app.post("/api/assets/refresh")
 def refresh_assets() -> dict[str, list[str]]:
     return _asset_scan()
+
+
+@app.get("/api/models")
+def list_models() -> list[dict[str, Any]]:
+    return _model_catalog()
+
+
+@app.post("/api/models/install", status_code=202)
+def install_model(request: ModelInstallRequest) -> dict[str, Any]:
+    entry = next((item for item in _model_catalog() if item["id"] == request.model_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="モデルが見つかりません")
+    if not entry["supported"]:
+        raise HTTPException(
+            status_code=409,
+            detail=entry["compatibility_message"] or "この環境では利用できません",
+        )
+    try:
+        return model_install_manager.start(request.model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/model-installs/{job_id}")
+def model_install_status(job_id: str) -> dict[str, Any]:
+    try:
+        return model_install_manager.get(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="モデル導入処理が見つかりません") from exc
 
 
 @app.get("/api/voice-profiles")
@@ -245,7 +342,10 @@ def delete_voice_profile(profile_id: str) -> dict[str, bool]:
 @app.post("/api/model/load")
 def load_model(request: ModelLoadRequest) -> dict[str, Any]:
     try:
-        return engine.load_model(request)
+        status = engine.load_model(request)
+        inference_settings_store.save(request.model_dump())
+        _set_model_notice(None)
+        return {**status, "notice": None}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -260,7 +360,7 @@ def unload_model() -> dict[str, Any]:
 
 @app.get("/api/model/status")
 def model_status() -> dict[str, Any]:
-    return engine.status()
+    return _model_status()
 
 
 @app.post("/api/synthesis", status_code=202)
@@ -745,23 +845,38 @@ def _port_is_available(host: str, port: int) -> bool:
 
 
 def _autoload_default_model() -> None:
+    saved = inference_settings_store.load()
+    settings = _preferred_inference_settings()
     try:
-        device = default_runtime_device()
-        precisions = list_available_runtime_precisions(device)
-        precision = "bf16" if "bf16" in precisions else "fp32"
-        print(f"[studio] loading {_default_checkpoint()} on {device}/{precision}")
-        engine.load_model(
-            ModelLoadRequest(
-                checkpoint=_default_checkpoint(),
-                model_device=device,
-                model_precision=precision,
-                codec_device=device,
-                codec_precision=precision,
-            )
+        request = ModelLoadRequest.model_validate(settings)
+        print(
+            f"[studio] loading {request.checkpoint} on "
+            f"{request.model_device}/{request.model_precision}"
         )
+        engine.load_model(request)
+        _set_model_notice(None)
         print("[studio] model ready")
     except Exception as exc:
-        print(f"[studio] automatic model load failed: {exc}", file=sys.stderr)
+        if saved is None or settings["checkpoint"] == _default_checkpoint():
+            print(f"[studio] automatic model load failed: {exc}", file=sys.stderr)
+            return
+        try:
+            fallback = ModelLoadRequest.model_validate(_default_inference_settings())
+            print(
+                f"[studio] preferred model unavailable ({exc}); "
+                f"falling back to {fallback.checkpoint}",
+                file=sys.stderr,
+            )
+            engine.load_model(fallback)
+            _set_model_notice(
+                "前回のモデルを読み込めなかったため、標準モデルで起動しました。"
+                "モデル設定を確認してください。"
+            )
+            print("[studio] fallback model ready")
+        except Exception as fallback_exc:
+            print(
+                f"[studio] automatic model load failed: {fallback_exc}", file=sys.stderr
+            )
 
 
 def main() -> None:

@@ -14,6 +14,7 @@ StudioとIrodori-TTSは別リポジトリのまま利用します。Irodori-TTS�
 - 話速、生成ステップ、Text/Speaker/Caption CFG、seed、詳細生成設定
 - 公式45種の演技記号とVoice Design captionプリセット
 - Speaker Inversion、複数参照音声、参照なし、LoRAをボイスとして保存
+- Irodori-TTS側の標準・量子化モデルを自動検出し、方式、導入状態、互換性を確認して読み替え。公式INT8モデルはStudioから導入可能
 - 指定行からの連続生成・再生
 - 配信用FIFOキュー、自動再生、停止、再生音量、OBS向け音声出力デバイス選択
 - 台本制作・配信・VOICEVOX互換APIに共通するボイス設定と長文の自動分割生成。配信は生成キューと再生キューを独立させ、先頭の分割音声から再生しながら続きを生成
@@ -81,6 +82,8 @@ cd C:\AI\irodori-studio
 
 ### Gitで取得したソース版
 
+この手順を使えるのは、`git clone`で取得したStudioだけです。GitHubが自動生成する`Source code (zip)`／`Source code (tar.gz)`にはGitの更新履歴がないため、`update-studio`は利用できません。ソースアーカイブを使う場合は新しいアーカイブを別フォルダーへ展開し、後述するWindowsリリースパッケージと同様に`workspace/`と`.studio/`を移して、`-SetupOnly`を一度実行してください。
+
 Studioを停止してから、Studioのフォルダーで次を実行します。
 
 ```powershell
@@ -90,7 +93,7 @@ Studioを停止してから、Studioのフォルダーで次を実行します�
 
 PowerShellを開かず、`update-studio.cmd`をダブルクリックしても更新できます。結果を確認できるよう、完了または失敗後もキーを押すまでウィンドウを閉じません。更新が完了したら`start-studio.cmd`で起動します。
 
-`update-studio`は未コミットの変更がないことを確認してから`git pull --ff-only`を実行し、続けて更新後の準備だけを行います。`package-lock.json`とStudio用Python依存の定義を前回準備時の記録と比較し、変更がある場合だけ`npm ci`、Python依存の更新、SPAの再ビルドを自動実行します。したがって通常の更新では、手作業で`npm install`や`uv pip install`を実行する必要はありません。未コミットのファイルがある場合は、ユーザーの編集を上書きしないよう更新を中止します。
+`update-studio`は未コミットの変更がないことを確認してから`git pull --ff-only`を実行し、続けて更新後の準備だけを行います。`package-lock.json`とStudio用Python依存の定義を前回準備時の記録と比較し、変更がある場合だけ`npm ci`、Python依存の更新、SPAの再ビルドを自動実行します。したがって通常の更新では、手作業で`npm install`や`uv pip install`を実行する必要はありません。未コミットのファイルがある場合は、ユーザーの編集を上書きしないよう更新を中止します。`-SetupOnly`は依存同期とSPAビルドまでを行い、サーバーやブラウザーを起動せず終了するオプションです。
 
 同じ処理を手動で行う場合は次の2コマンドです。
 
@@ -107,6 +110,31 @@ git pull --ff-only
 ```
 
 `-ForceSync`は、更新取得後にIrodori-TTSのuv環境、Studio用Python依存、ソース版のNode依存をすべて同期し直します。ユーザーの台本、録音、学習データ、モデルが入る`workspace/`と、保存済み設定が入る`.studio/`は削除しません。
+
+`update-studio`がGitから更新するのはStudioリポジトリだけです。外部のIrodori-TTS本体は自動で`git pull`しません。Irodori-TTS側も更新するときは、そちらの作業ツリーを確認して更新した後、Studioの環境を完全同期します。
+
+```powershell
+cd C:\AI\Irodori-TTS
+git status --short
+git pull --ff-only
+
+cd C:\AI\irodori-studio
+.\start-studio.ps1 -SetupOnly -ForceSync
+.\start-studio.ps1
+```
+
+### 更新に失敗する場合
+
+まずStudioのフォルダーで`git status --short`を実行します。何か表示された場合は、利用者が編集したソースを誤って失わないよう`update-studio`が停止しています。必要な変更をコミットまたは退避してから再実行してください。`workspace/`と`.studio/`はGit管理外なので、通常ここに保存された制作データが原因で更新を止めることはありません。
+
+更新後に依存関係のエラーで起動できない場合は、Studioを停止し、次の完全同期を一度実行します。
+
+```powershell
+.\update-studio.ps1 -ForceSync
+.\start-studio.ps1
+```
+
+ローカルコミットがあり`git pull --ff-only`で履歴を進められない場合や、完全同期後も失敗する場合は、表示された最初のエラーメッセージと`git status --short`の結果を添えて報告してください。`workspace/`や`.studio/`を削除する必要はありません。
 
 ### Windowsリリースパッケージ
 
@@ -161,11 +189,38 @@ Irodori-TTSの保存場所だけを変更する場合は次のどちらかを使
 
 画面が定期取得する正常なHTTPリクエストは、重要な学習・エラーログを埋もれさせないよう既定では表示しません。警告、エラー、Studioの処理ログは引き続き表示されます。HTTP通信自体を調査するときだけ`-AccessLog`を指定してください。
 
-既定モデルは外部Irodori-TTSリポジトリの`models/Irodori-TTS-v4.1-Small/model.safetensors`を優先します。ローカルモデルがない場合は`Aratako/Irodori-TTS-v4.1-Small`を使用します。Speaker Inversion、参照音声、LoRAの候補は、外部リポジトリの`outputs/`から検出します。
+学習の既定基本モデルは、外部Irodori-TTSリポジトリの`models/Irodori-TTS-v4.1-Small/model.safetensors`を優先します。ローカルにない場合は`Aratako/Irodori-TTS-v4.1-Small`を使用します。推論では、上部のモデルボタンから標準モデルと量子化モデルを読み替えられます。Speaker Inversion、参照音声、LoRAの候補は、外部リポジトリの`outputs/`から検出します。
+
+## 読み上げモデルの選択と省VRAMモデル
+
+上部のモデルボタンを開くと、Irodori-TTSの`models/`と`outputs/`にある読み上げモデルを自動検出します。Safetensorsの量子化メタデータを確認して、標準、INT8 Weight-only、INT4 Weight-onlyなどの方式、導入状態、ファイルサイズ、現在のGPUとの互換性を一覧に表示します。フォルダ名だけでは量子化方式を判定しません。
+
+公式のIrodori v4.1 Small INT8は、省VRAMと品質のバランスを取る推奨候補です。未導入のカードにあるダウンロードアイコンを押すと、Irodori-TTSのHugging Face環境を使って次の場所へ導入します。
+
+```text
+Irodori-TTS\models\Irodori-TTS-v4.1-Small-Quantized\
+└─ int8-weight-only\
+   ├─ model.safetensors
+   └─ tokenizer\
+```
+
+ダウンロード中のファイルは一時領域へ置き、モデルのメタデータとTokenizerを検証してから完成フォルダへ切り替えます。中断した不完全ファイルがモデル一覧へ現れることはありません。INT4はさらにVRAMを抑える実験的な候補で、Compute Capability 8.0以上のCUDA GPUが必要です。
+
+量子化方式はモデルファイル自体に記録されています。モデル精度欄はINT8へ変更せず`bf16`のままにしてください。これは量子化されていない層と浮動小数点演算の精度を指定するためです。CodecをCPUへ移す場合は、`Codecデバイス: cpu`、`Codec精度: fp32`を選択します。音声復号は遅くなりますが、モデル本体以外のGPU使用量を減らせます。
+
+モデルを正常にロードすると、チェックポイント、モデル／Codecデバイス、精度を`.studio/inference.json`へ保存します。次回起動は最後に成功した推論設定を復元します。モデルが削除・移動されて読み込めない場合は標準モデルで起動し、画面で理由を通知します。失敗した設定自体は上書きしないため、一時的に外したドライブなどを戻して再選択できます。
+
+一覧にないローカルチェックポイントまたはHugging Face IDは「一覧にないモデルを指定」から選べます。公式INT8をHugging Faceキャッシュから直接使う場合は、次を入力できます。
+
+```text
+Aratako/Irodori-TTS-v4.1-Small-Quantized/int8-weight-only
+```
+
+この選択は読み上げ推論だけに適用されます。Speaker InversionとLoRAの学習タブは、引き続き対応する標準のフル精度基本モデルを既定にし、推論で選んだ量子化モデルへ連動しません。
 
 ## Irodori-TTSとの関係
 
-StudioはIrodori-TTSをコピー、fork、またはサブモジュール化しません。起動時に外部リポジトリをPython import pathへ追加し、Irodori-TTSのuv環境からStudioサーバーを実行します。
+StudioはIrodori-TTSをコピー、fork、またはサブモジュール化しません。起動時に外部リポジトリをPython import pathへ追加し、Irodori-TTSのuv環境からStudioサーバーを実行します。既存のモデルを自動で移動・変更することもありません。モデル画面でユーザーが公式量子化モデルの導入を明示した場合だけ、検証済みモデルを外部リポジトリの`models/`へ追加します。
 
 ```text
 Browser
@@ -177,7 +232,7 @@ Browser
           └─ 同じ生成キューとモデルを共有
 ```
 
-これにより、巨大なPyTorch/CUDA環境をStudio用に二重作成せず、Irodori-TTS側で選んだbackendをそのまま利用します。StudioはIrodori-TTSのソース、モデル、学習成果物を移動しません。初回セットアップ時には、同じ`.venv`へFastAPI、Uvicorn、NumPy、Pydantic、SoundFile、faster-whisperが不足している場合だけ追加します。
+これにより、巨大なPyTorch/CUDA環境をStudio用に二重作成せず、Irodori-TTS側で選んだbackendをそのまま利用します。StudioはIrodori-TTSのソース、既存モデル、学習成果物を移動しません。初回セットアップ時には、同じ`.venv`へFastAPI、Uvicorn、NumPy、Pydantic、SoundFile、faster-whisperが不足している場合だけ追加します。
 
 ## 最初の操作
 
@@ -288,6 +343,8 @@ uv run python -m unittest discover -s tests -p "test_*.py" -v
 ```powershell
 .\build-release.ps1
 ```
+
+バージョンは`package.json`から取得します。出力先を変える場合は`-OutputDirectory D:\Releases`を指定できます。既に最新の`dist/client`を検証済みの場合に限り`-SkipBuild`で再ビルドを省略できます。
 
 GitHubでReleaseを公開すると、同じ処理がWindows runnerで実行され、ZIPとSHA-256がRelease Assetsへ自動添付されます。
 

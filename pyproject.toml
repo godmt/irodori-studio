@@ -1,6 +1,6 @@
 [project]
 name = "irodori-studio"
-version = "0.4.1"
+version = "0.5.0"
 description = "Local production, streaming, and dataset tooling for Irodori-TTS"
 readme = "README.md"
 license = "MIT"

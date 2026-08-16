@@ -12,6 +12,7 @@ if str(STUDIO_ROOT) not in sys.path:
 
 from studio_backend.models import (  # noqa: E402
     AudioImportJobCreateRequest,
+    ModelInstallRequest,
     ProjectRenameRequest,
     RecordingDatasetCreateRequest,
     TrainingJobCreateRequest,
@@ -63,6 +64,10 @@ class RequestModelTests(unittest.TestCase):
                 dataset_id="dataset",
                 sources=[{"path": "bad.wav", "start_seconds": 60, "end_seconds": 30}],
             )
+
+    def test_model_install_id_is_normalized(self) -> None:
+        request = ModelInstallRequest(model_id="  irodori-v4.1-small-int8-weight-only  ")
+        self.assertEqual(request.model_id, "irodori-v4.1-small-int8-weight-only")
 
 
 if __name__ == "__main__":

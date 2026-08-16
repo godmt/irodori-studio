@@ -17,6 +17,9 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - Source checkouts persist dependency fingerprints under ignored `.studio/`. A changed `package-lock.json`, changed Studio Python requirement list, missing dependency directory, or explicit `-ForceSync` triggers the corresponding deterministic synchronization before the SPA build. Packaged releases have no frontend source and continue to use the bundled client without Node.js.
 - `server.py` inserts that root into `sys.path` before importing `irodori_tts`.
 - `StudioEngine` owns one resident `IrodoriInferenceRuntime` and one FIFO generation worker.
+- Inference model discovery reads only the bounded safetensors JSON header and treats `irodori_quantization_json` as the quantization source of truth; directory names are presentation hints, never the compatibility contract. The last successful `ModelLoadRequest` is atomically persisted under ignored `.studio/inference.json` and restored on startup. A missing preferred model falls back to the full-precision standard checkpoint with a user-visible notice without overwriting that preference.
+- Known official quantized checkpoints are downloaded only after an explicit UI action. `ModelInstallManager` stages the selected model and tokenizer under the external Irodori-TTS `models/.studio-downloads/`, validates the quantization metadata, and atomically exposes a self-contained model directory. Studio never mutates an existing checkpoint. INT4 availability is gated by TorchAO and CUDA compute capability; other discovered checkpoints remain selectable when their metadata is valid.
+- The persisted inference selection is intentionally separate from `default_checkpoint`, which remains the matching full-precision v4.1 Small base for Speaker Inversion and LoRA training.
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
 - Voice Library-backed Studio requests and VOICEVOX-compatible requests both resolve source assets, speed, seed and CFG values through `profile_synthesis.py` before entering `StudioEngine`; clients must not reconstruct a second copy of that mapping.
 - Unless an explicit duration is requested, `StudioEngine` splits long synthesis text at Japanese sentence or punctuation boundaries with a 64-character segment bound, generates segments sequentially through the resident runtime, inserts 160 ms joins and persists one combined WAV plus aggregate and per-segment metadata. Cancellation is checked between segments. Explicit-duration synthesis remains one segment because independently fixing each segment duration would change the request contract. Live obtains its plan from the same splitter and uses independent asynchronous producer and consumer loops: the producer submits every bounded profile-backed job sequentially without waiting for playback, while the consumer starts each resolved audio file in FIFO order. The resident Python worker and browser media pipeline therefore overlap without running model inference concurrently on the same GPU.
@@ -50,6 +53,9 @@ studio_backend/
   audio_utils.py         Shared mono loading and deterministic linear resampling
   dataset_preprocessing.py Versioned method-independent dataset audio pipeline
   engine.py              Resident runtime and FIFO synthesis queue
+  inference_settings.py  Atomic last-successful inference runtime preference
+  model_catalog.py       Bounded checkpoint metadata inspection and model catalog
+  model_installs.py      Staged official quantized-model installation
   profile_synthesis.py  Shared Voice Library profile-to-engine request resolver
   text_segmentation.py   Sentence-aware bounded synthesis segmentation
   models.py              HTTP request schemas

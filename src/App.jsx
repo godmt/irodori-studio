@@ -105,6 +105,13 @@ import { SortableList } from "./components/SortableList.jsx";
 const STORAGE_KEY = "irodori-studio-project-v1";
 const PLAYBACK_VOLUME_KEY = "irodori-studio-playback-volume-v2";
 
+function formatModelSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  return bytes >= 1024 ** 3
+    ? `${(bytes / (1024 ** 3)).toFixed(2)} GB`
+    : `${Math.round(bytes / (1024 ** 2))} MB`;
+}
+
 function nextAvailableProjectName(projects, currentTitle = "") {
   const base = "新しい音声プロジェクト";
   const names = new Set([
@@ -291,6 +298,8 @@ function App() {
   ));
   const [model, setModel] = useState({ loaded: false });
   const [bootstrap, setBootstrap] = useState(null);
+  const [modelCatalog, setModelCatalog] = useState([]);
+  const [installingModelId, setInstallingModelId] = useState("");
   const [modelSettings, setModelSettings] = useState({
     checkpoint: "",
     modelDevice: "cuda",
@@ -526,6 +535,7 @@ function App() {
       .then((data) => {
         if (cancelled) return;
         setBootstrap(data);
+        setModelCatalog(data.model_catalog || []);
         setLearningDatasetId((current) => resolveLearningDatasetId(data.recording_datasets || [], current));
         const profiles = data.voice_profiles || [];
         const mergedProject = mergeVoiceLibrary(projectRef.current, profiles);
@@ -540,19 +550,27 @@ function App() {
         setVoiceLibraryReady(true);
         setVoiceSaveState({ status: "saved", message: "すべての変更を保存済み" });
         setModel(data.model || { loaded: false });
+        const inferenceSettings = data.inference_settings || {};
         setModelSettings((current) => ({
           ...current,
-          checkpoint: current.checkpoint || data.default_checkpoint,
-          modelDevice: data.default_device || current.modelDevice,
-          codecDevice: data.default_device || current.codecDevice,
-          modelPrecision: data.precisions?.[data.default_device]?.includes("bf16") ? "bf16" : "fp32",
-          codecPrecision: data.precisions?.[data.default_device]?.includes("bf16") ? "bf16" : "fp32",
+          checkpoint: current.checkpoint || inferenceSettings.checkpoint || data.default_checkpoint,
+          modelDevice: inferenceSettings.model_device || data.default_device || current.modelDevice,
+          codecDevice: inferenceSettings.codec_device || data.default_device || current.codecDevice,
+          modelPrecision: inferenceSettings.model_precision || (data.precisions?.[data.default_device]?.includes("bf16") ? "bf16" : "fp32"),
+          codecPrecision: inferenceSettings.codec_precision || (data.precisions?.[data.default_device]?.includes("bf16") ? "bf16" : "fp32"),
         }));
         setConnection("online");
       })
       .catch(() => setConnection("offline"));
     return () => { cancelled = true; };
   }, []);
+
+  const shownModelNoticeRef = useRef("");
+  useEffect(() => {
+    if (!model.notice || model.notice === shownModelNoticeRef.current) return;
+    shownModelNoticeRef.current = model.notice;
+    notify(model.notice, "error");
+  }, [model.notice, notify]);
 
   useEffect(() => {
     if (connection !== "online") return undefined;
@@ -1146,6 +1164,36 @@ function App() {
     }
   }, [modelSettings, notify]);
 
+  const selectCatalogModel = useCallback((entry) => {
+    if (!entry.installed && entry.installable) return;
+    setModelSettings((current) => ({
+      ...current,
+      checkpoint: entry.source,
+      modelPrecision: entry.quantization ? "bf16" : current.modelPrecision,
+    }));
+  }, []);
+
+  const handleInstallModel = useCallback(async (entry) => {
+    setInstallingModelId(entry.id);
+    try {
+      let job = await api.installModel(entry.id);
+      while (!["completed", "failed"].includes(job.status)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        job = await api.modelInstall(job.id);
+      }
+      if (job.status === "failed") throw new Error(job.error || "モデルを導入できませんでした");
+      const catalog = await api.models();
+      setModelCatalog(catalog);
+      const installed = catalog.find((item) => item.id === entry.id);
+      if (installed) selectCatalogModel(installed);
+      notify(`${entry.name}を導入しました`, "success");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setInstallingModelId("");
+    }
+  }, [notify, selectCatalogModel]);
+
   const choosePath = useCallback(async (kind, multiple, onPaths) => {
     try {
       const result = await api.dialog(kind, multiple);
@@ -1717,7 +1765,7 @@ function App() {
           {view === "recorder" ? <span className="recorder-local-pill"><HardDrive size={18} /><span><small>RECORDING DATASETS</small><strong>{recorderRecording ? "録音中 · 画面を固定" : "Studioに自動保存"}</strong></span></span> : view === "training" ? <span className="recorder-local-pill"><GraduationCap size={18} /><span><small>TRAINING WORKSPACE</small><strong>モデルをStudioに保存</strong></span></span> : <>
             <button className={`model-pill ${model.loaded ? "loaded" : ""}`} onClick={() => setActiveModal("model")}>
               <span className="model-state" />
-              <span><small>{connection === "offline" ? "API OFFLINE" : model.loaded ? "MODEL READY" : "MODEL OFF"}</small><strong>{model.loaded ? model.name : "モデルをロード"}</strong></span>
+              <span><small>{connection === "offline" ? "API OFFLINE" : model.loaded ? `MODEL READY${model.quantization?.label ? ` · ${model.quantization.label}` : ""}` : "MODEL OFF"}</small><strong>{model.loaded ? model.name : "モデルをロード"}</strong></span>
               <CaretDown size={16} />
             </button>
             <span className="queue-indicator"><Queue size={18} /><strong>{queueCount}</strong></span>
@@ -1914,14 +1962,51 @@ function App() {
       {toast && <div className={`toast ${toast.tone}`} key={toast.id}>{toast.tone === "error" ? <WarningCircle size={20} /> : <Check size={20} />}{toast.message}</div>}
       <EmojiPicker picker={emojiPicker} expanded={emojiExpanded} onExpandedChange={setEmojiExpanded} onSelect={insertEmoji} onClose={() => setEmojiPicker(null)} />
 
-      {activeModal === "model" && <Modal title="Irodori-TTSモデル" eyebrow="LOCAL RUNTIME" onClose={() => setActiveModal(null)} wide>
+      {activeModal === "model" && <Modal title="Irodori-TTSモデル" eyebrow="LOCAL RUNTIME" onClose={() => setActiveModal(null)} wide scrollable>
         <div className="model-layout">
           <section className="form-stack">
-            <label><span>チェックポイント</span><div className="path-input"><input list="checkpoint-assets" value={modelSettings.checkpoint} onChange={(event) => setModelSettings({ ...modelSettings, checkpoint: event.target.value })} /><button onClick={() => choosePath("checkpoint", false, ([path]) => setModelSettings({ ...modelSettings, checkpoint: path }))}><FolderOpen size={18} />選択</button></div><datalist id="checkpoint-assets">{bootstrap?.assets?.checkpoints?.map((path) => <option key={path} value={path} />)}</datalist></label>
+            <div className="model-catalog-heading"><div><strong>読み上げモデル</strong><span>導入済みモデルは自動検出され、最後に読み込んだ設定を次回も使用します。</span></div><IconButton label="モデル一覧を更新" onClick={async () => setModelCatalog(await api.models())}><ArrowsClockwise size={18} /></IconButton></div>
+            <div className="model-catalog" role="radiogroup" aria-label="読み上げモデル">
+              {modelCatalog.map((entry) => {
+                const selected = modelSettings.checkpoint === entry.source;
+                const installing = installingModelId === entry.id;
+                return (
+                  <div key={entry.id} className={`model-catalog-item ${selected ? "selected" : ""} ${!entry.supported ? "unsupported" : ""}`}>
+                    <button
+                      type="button"
+                      className="model-catalog-select"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={!entry.supported || (!entry.installed && entry.installable)}
+                      onClick={() => selectCatalogModel(entry)}
+                    >
+                      <span className="model-catalog-radio">{selected && <Check size={15} weight="bold" />}</span>
+                      <span className="model-catalog-copy">
+                        <strong>{entry.name}</strong>
+                        <small>{entry.description}</small>
+                        <span className="model-catalog-meta">
+                          {entry.quantization?.label && <em>{entry.quantization.label}</em>}
+                          {entry.recommended && <em>推奨</em>}
+                          {entry.experimental && <em>実験的</em>}
+                          {entry.installed && <em>導入済み</em>}
+                          {formatModelSize(entry.size_bytes) && <em>{formatModelSize(entry.size_bytes)}</em>}
+                        </span>
+                        {entry.compatibility_message && <span className="model-compatibility"><WarningCircle size={16} />{entry.compatibility_message}</span>}
+                      </span>
+                    </button>
+                    {entry.installable && !entry.installed && <IconButton className="model-install-button" label={`${entry.name}を導入`} onClick={() => handleInstallModel(entry)} disabled={installing || !entry.supported}>{installing ? <SpinnerGap className="spin" size={20} /> : <DownloadSimple size={20} />}</IconButton>}
+                  </div>
+                );
+              })}
+            </div>
+            <details className="custom-model-settings">
+              <summary>一覧にないモデルを指定</summary>
+              <label><span>チェックポイントまたはHugging Face ID</span><div className="path-input"><input list="checkpoint-assets" value={modelSettings.checkpoint} onChange={(event) => setModelSettings({ ...modelSettings, checkpoint: event.target.value })} /><IconButton label="チェックポイントを選択" onClick={() => choosePath("checkpoint", false, ([path]) => setModelSettings({ ...modelSettings, checkpoint: path }))}><FolderOpen size={18} /></IconButton></div><datalist id="checkpoint-assets">{bootstrap?.assets?.checkpoints?.map((path) => <option key={path} value={path} />)}</datalist></label>
+            </details>
             <div className="form-grid"><label><span>モデルデバイス</span><select value={modelSettings.modelDevice} onChange={(event) => setModelSettings({ ...modelSettings, modelDevice: event.target.value })}>{(bootstrap?.devices || ["cuda", "cpu"]).map((device) => <option key={device}>{device}</option>)}</select></label><label><span>モデル精度</span><select value={modelSettings.modelPrecision} onChange={(event) => setModelSettings({ ...modelSettings, modelPrecision: event.target.value })}>{(bootstrap?.precisions?.[modelSettings.modelDevice] || ["fp32", "bf16"]).map((precision) => <option key={precision}>{precision}</option>)}</select></label><label><span>Codecデバイス</span><select value={modelSettings.codecDevice} onChange={(event) => setModelSettings({ ...modelSettings, codecDevice: event.target.value })}>{(bootstrap?.devices || ["cuda", "cpu"]).map((device) => <option key={device}>{device}</option>)}</select></label><label><span>Codec精度</span><select value={modelSettings.codecPrecision} onChange={(event) => setModelSettings({ ...modelSettings, codecPrecision: event.target.value })}>{(bootstrap?.precisions?.[modelSettings.codecDevice] || ["fp32", "bf16"]).map((precision) => <option key={precision}>{precision}</option>)}</select></label></div>
             <div className="modal-actions"><button className="secondary-button" onClick={async () => { await api.unloadModel(); setModel({ loaded: false }); }} disabled={!model.loaded || modelLoading}>アンロード</button><button className="primary-button" onClick={handleLoadModel} disabled={modelLoading || !modelSettings.checkpoint}>{modelLoading ? <SpinnerGap className="spin" size={20} /> : <Cpu size={20} />}{modelLoading ? "ロード中…" : "モデルをロード"}</button></div>
           </section>
-          <aside className="runtime-summary"><span className={`runtime-icon ${model.loaded ? "loaded" : ""}`}><Cpu size={30} /></span><small>{model.loaded ? "READY" : "NOT LOADED"}</small><h3>{model.loaded ? model.name : "ローカルモデル未選択"}</h3>{model.loaded ? <dl><div><dt>Parameters</dt><dd>{model.parameter_count ? `${(model.parameter_count / 1e6).toFixed(0)}M` : "—"}</dd></div><div><dt>Voice Design</dt><dd>{model.use_caption_condition ? "対応" : "非対応"}</dd></div><div><dt>Speaker</dt><dd>{model.use_speaker_condition ? "対応" : "非対応"}</dd></div><div><dt>Duration</dt><dd>{model.use_duration_predictor ? "自動" : "固定"}</dd></div><div><dt>VRAM</dt><dd>{model.cuda ? `${model.cuda.allocated_gb} GB` : "—"}</dd></div></dl> : <p>チェックポイントと実行デバイスを選び、モデルをメモリへロードしてください。</p>}</aside>
+          <aside className="runtime-summary"><span className={`runtime-icon ${model.loaded ? "loaded" : ""}`}><Cpu size={30} /></span><small>{model.loaded ? "READY" : "NOT LOADED"}</small><h3>{model.loaded ? model.name : "モデル未選択"}</h3>{model.loaded ? <dl><div><dt>Parameters</dt><dd>{model.parameter_count ? `${(model.parameter_count / 1e6).toFixed(0)}M` : "—"}</dd></div><div><dt>量子化</dt><dd>{model.quantization?.label || "標準"}</dd></div><div><dt>Voice Design</dt><dd>{model.use_caption_condition ? "対応" : "非対応"}</dd></div><div><dt>Speaker</dt><dd>{model.use_speaker_condition ? "対応" : "非対応"}</dd></div><div><dt>Duration</dt><dd>{model.use_duration_predictor ? "自動" : "固定"}</dd></div><div><dt>VRAM</dt><dd>{model.cuda ? `${model.cuda.allocated_gb} GB` : "—"}</dd></div></dl> : <p>使用するモデルを選び、メモリへロードしてください。</p>}</aside>
         </div>
       </Modal>}
 

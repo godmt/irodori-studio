@@ -19,6 +19,7 @@ from irodori_tts.inference_runtime import (
     save_wav,
 )
 
+from studio_backend.model_catalog import inspect_checkpoint
 from studio_backend.models import ModelLoadRequest, SynthesisPayload
 from studio_backend.text_segmentation import split_synthesis_text
 from studio_backend.time_utils import utc_now
@@ -88,6 +89,8 @@ class StudioEngine:
             else:
                 checkpoint = str(download_hf_checkpoint(checkpoint_raw))
 
+            checkpoint_info = inspect_checkpoint(Path(checkpoint))
+
             key = RuntimeKey(
                 checkpoint=checkpoint,
                 model_device=request.model_device,
@@ -105,6 +108,7 @@ class StudioEngine:
                 self._model_info = {
                     "loaded": True,
                     "checkpoint": checkpoint,
+                    "source": checkpoint_raw,
                     "name": Path(checkpoint).parent.name or Path(checkpoint).stem,
                     "model_device": key.model_device,
                     "model_precision": key.model_precision,
@@ -119,6 +123,8 @@ class StudioEngine:
                     "parameter_count": sum(
                         parameter.numel() for parameter in runtime.model.parameters()
                     ),
+                    "checkpoint_size_bytes": checkpoint_info["size_bytes"],
+                    "quantization": checkpoint_info["quantization"],
                     "reloaded": bool(reloaded),
                     "load_seconds": time.perf_counter() - started,
                 }

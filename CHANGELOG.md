@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-08-16
+
+- Added a local inference-model catalog that discovers standard and quantized Irodori checkpoints, reads Safetensors metadata instead of trusting folder names, reports file size and runtime compatibility, and keeps quantized inference separate from the full-precision training base model.
+- Added explicit in-Studio installation of the official Irodori v4.1 Small INT8 weight-only model through a validated staging directory and atomic publish. Incomplete downloads remain hidden, INT4 is gated by the required CUDA capability, and terminal job state is reported only after temporary files are cleaned up.
+- Persisted the last successfully loaded checkpoint, model and Codec device, and precision under `.studio/inference.json`; startup restores that selection and visibly falls back to the standard model when the saved checkpoint is unavailable.
+- Expanded the user update guide for Git checkouts, generated source archives and Windows packages, including the boundary between Studio and the external Irodori-TTS checkout, `-SetupOnly`/`-ForceSync`, dependency recovery, and release-package options.
+
 ## 0.4.1 — 2026-08-16
 
 - Unified Live and VOICEVOX-compatible requests through the same server-side Voice Library profile resolver and sentence-aware synthesis planner. Live now runs independent producer and consumer queues: generation continues across all bounded segments without waiting for browser playback, while the first ready segment starts playing immediately.
