@@ -87,6 +87,7 @@ import {
   VOICE_COLORS,
 } from "./voice-library.js";
 import { RecorderWorkspace } from "./features/recorder/RecorderWorkspace.jsx";
+import { runLiveSegmentPipeline } from "./features/live/live-synthesis.js";
 import { TrainingWorkspace } from "./features/training/TrainingWorkspace.jsx";
 import {
   LEARNING_DATASET_STORAGE_KEY,
@@ -345,6 +346,7 @@ function App() {
   const generationPromisesRef = useRef(new Map());
   const liveQueueRef = useRef([]);
   const livePumpingRef = useRef(false);
+  const liveGenerationTokenRef = useRef(0);
   const lineTextRefs = useRef(new Map());
   const liveTextRef = useRef(null);
   const textSelectionRef = useRef(new Map());
@@ -820,6 +822,18 @@ function App() {
     setQueueCount((count) => count + 1);
     try {
       const queued = await api.synthesize(payload);
+      onProgress?.(queued);
+      return await waitForJob(queued.id, onProgress);
+    } finally {
+      setQueueCount((count) => Math.max(0, count - 1));
+    }
+  }, [model.loaded, waitForJob]);
+
+  const submitProfileSynthesis = useCallback(async (profileId, payload, onProgress) => {
+    if (!model.loaded) throw new Error("モデルを先にロードしてください");
+    setQueueCount((count) => count + 1);
+    try {
+      const queued = await api.synthesizeVoiceProfile(profileId, payload);
       onProgress?.(queued);
       return await waitForJob(queued.id, onProgress);
     } finally {
@@ -1360,7 +1374,10 @@ function App() {
       preset: livePreset,
       status: "queued",
       audioFile: null,
+      audioFiles: [],
       duration: null,
+      segmentsReady: 0,
+      segmentsTotal: 1,
       error: null,
     };
     setLiveItems((current) => [item, ...current]);
@@ -1373,44 +1390,136 @@ function App() {
         while (liveQueueRef.current.length) {
           const next = liveQueueRef.current.shift();
           const voice = projectRef.current.voices.find((entry) => entry.id === next.voiceId) || projectRef.current.voices[0];
-          const line = createLine({
-            id: next.id,
-            text: next.text,
-            caption: next.caption,
-            voiceId: next.voiceId,
-            params: {
-              ...DEFAULT_PARAMS,
-              quality: next.preset,
-              numSteps: QUALITY_PRESETS[next.preset].numSteps,
-              seed: null,
-            },
-          });
+          const generationToken = liveGenerationTokenRef.current;
+          const generatedAudioFiles = [];
           try {
-            const result = await submitSynthesis(buildPayload(line, voice), (job) => {
-              setLiveItems((current) => current.map((entry) => entry.id === next.id ? { ...entry, status: job.status } : entry));
+            const plan = await api.synthesisPlan(next.text);
+            const segments = plan.segments || [];
+            if (!segments.length) throw new Error("読み上げ文章を入力してください");
+            setLiveItems((current) => current.map((entry) => entry.id === next.id ? {
+              ...entry,
+              status: "running",
+              segmentsTotal: segments.length,
+            } : entry));
+
+            const baseSeed = voice?.apiSeed === "" || voice?.apiSeed == null
+              ? null
+              : Number(voice.apiSeed);
+            let totalDuration = 0;
+            let playbackError = null;
+            let autoplay = true;
+
+            const startSegment = (index) => {
+              const segmentSeed = baseSeed == null ? null : baseSeed + index;
+              const onProgress = (job) => {
+                if (liveGenerationTokenRef.current !== generationToken) return;
+                setLiveItems((current) => current.map((entry) => entry.id === next.id ? {
+                  ...entry,
+                  status: "running",
+                } : entry));
+              };
+              if (voice?.apiProfileId) {
+                return submitProfileSynthesis(voice.apiProfileId, {
+                  line_id: `${next.id}-${index + 1}`,
+                  text: segments[index],
+                  caption: next.caption,
+                  num_steps: QUALITY_PRESETS[next.preset].numSteps,
+                  seed: segmentSeed,
+                }, onProgress);
+              }
+              const line = createLine({
+                id: `${next.id}-${index + 1}`,
+                text: segments[index],
+                caption: next.caption,
+                voiceId: next.voiceId,
+                params: {
+                  ...DEFAULT_PARAMS,
+                  quality: next.preset,
+                  numSteps: QUALITY_PRESETS[next.preset].numSteps,
+                  seed: segmentSeed,
+                },
+              });
+              return submitSynthesis(buildPayload(line, voice), onProgress);
+            };
+
+            await runLiveSegmentPipeline({
+              segmentCount: segments.length,
+              produce: async (index) => {
+                if (liveGenerationTokenRef.current !== generationToken) throw new Error("生成をキャンセルしました");
+                const result = await startSegment(index);
+                generatedAudioFiles.push(result.audio_file);
+                totalDuration += Number(result.duration || 0);
+                setLiveItems((current) => current.map((entry) => entry.id === next.id ? {
+                  ...entry,
+                  status: "running",
+                  audioFile: generatedAudioFiles[0],
+                  audioFiles: [...generatedAudioFiles],
+                  duration: totalDuration,
+                  segmentsReady: index + 1,
+                } : entry));
+                return result;
+              },
+              consume: async (result) => {
+                if (autoplay && liveGenerationTokenRef.current === generationToken) {
+                  try {
+                    const completed = await playAudio(result.audio_file, next.id);
+                    if (!completed) autoplay = false;
+                  } catch (playError) {
+                    playbackError = playError.message;
+                    autoplay = false;
+                  }
+                }
+              },
             });
+
+            if (liveGenerationTokenRef.current !== generationToken) throw new Error("生成をキャンセルしました");
             setLiveItems((current) => current.map((entry) => entry.id === next.id ? {
               ...entry,
               status: "ready",
-              audioFile: result.audio_file,
-              duration: result.duration,
+              audioFile: generatedAudioFiles[0],
+              audioFiles: [...generatedAudioFiles],
+              duration: totalDuration,
+              segmentsReady: segments.length,
+              error: playbackError,
             } : entry));
-            await playAudio(result.audio_file, next.id);
+            if (playbackError) notify(`${playbackError} 発話履歴から再生できます。`, "error");
           } catch (error) {
-            setLiveItems((current) => current.map((entry) => entry.id === next.id ? { ...entry, status: "failed", error: error.message } : entry));
-            notify(error.message, "error");
+            await releaseAudioFiles(generatedAudioFiles);
+            const cancelled = liveGenerationTokenRef.current !== generationToken;
+            setLiveItems((current) => current.map((entry) => entry.id === next.id ? {
+              ...entry,
+              status: cancelled ? "cancelled" : "failed",
+              audioFile: null,
+              audioFiles: [],
+              error: cancelled ? null : error.message,
+            } : entry));
+            if (!cancelled) notify(error.message, "error");
           }
         }
         livePumpingRef.current = false;
       })();
     }
-  }, [buildPayload, liveCaption, livePreset, liveVoiceId, notify, playAudio, primePlayback, submitSynthesis]);
+  }, [buildPayload, liveCaption, livePreset, liveVoiceId, notify, playAudio, primePlayback, releaseAudioFiles, submitProfileSynthesis, submitSynthesis]);
+
+  const replayLiveItem = useCallback(async (item) => {
+    primePlayback();
+    const audioFiles = item.audioFiles?.length ? item.audioFiles : [item.audioFile].filter(Boolean);
+    try {
+      for (const audioFile of audioFiles) {
+        const completed = await playAudio(audioFile, item.id);
+        if (!completed) break;
+      }
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }, [notify, playAudio, primePlayback]);
 
   const stopLive = useCallback(async () => {
+    liveGenerationTokenRef.current += 1;
     liveQueueRef.current = [];
     stopPlayback();
     try { await api.cancelAll(); } catch { /* Local playback still stops if cancellation fails. */ }
-    setLiveItems((current) => current.map((item) => item.status === "queued" ? { ...item, status: "cancelled" } : item));
+    setLiveItems((current) => current.map((item) => ["queued", "running"].includes(item.status) ? { ...item, status: "cancelled" } : item));
   }, [stopPlayback]);
 
   useEffect(() => {
@@ -1742,8 +1851,8 @@ function App() {
               {liveItems.length === 0 ? <div className="empty-live"><Broadcast size={32} /><strong>発話キューは空です</strong><span>上の入力欄から最初のメッセージを送ってください。</span></div> : liveItems.map((item) => (
                 <article key={item.id} className={speakingLineId === item.id ? "speaking" : ""}>
                   <span className="live-state">{item.status === "running" ? <SpinnerGap className="spin" size={18} /> : item.status === "ready" ? <Check size={18} /> : item.status === "failed" ? <WarningCircle size={18} /> : <Queue size={18} />}</span>
-                  <div><strong>{item.text}</strong><small>{QUALITY_PRESETS[item.preset]?.label} · {formatDuration(item.duration)}</small>{item.error && <small className="line-error">{item.error}</small>}</div>
-                  {item.audioFile && <IconButton label="もう一度再生" onClick={() => playAudio(item.audioFile, item.id)}><Play size={18} weight="fill" /></IconButton>}
+                  <div><strong>{item.text}</strong><small>{QUALITY_PRESETS[item.preset]?.label} · {formatDuration(item.duration)}{item.segmentsTotal > 1 ? ` · ${item.segmentsReady}/${item.segmentsTotal}` : ""}</small>{item.error && <small className="line-error">{item.error}</small>}</div>
+                  {item.audioFile && <IconButton label="もう一度再生" onClick={() => replayLiveItem(item)}><Play size={18} weight="fill" /></IconButton>}
                 </article>
               ))}
             </div>

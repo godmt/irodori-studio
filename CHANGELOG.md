@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.4.1 — 2026-08-16
+
+- Unified Live and VOICEVOX-compatible requests through the same server-side Voice Library profile resolver and sentence-aware synthesis planner. Live now runs independent producer and consumer queues: generation continues across all bounded segments without waiting for browser playback, while the first ready segment starts playing immediately.
+
 ## 0.4.0 — 2026-08-15
 
 - Added `update-studio.ps1` and a double-clickable `update-studio.cmd`, plus dependency fingerprints so source checkouts safely fast-forward, automatically run `npm ci`, refresh Studio Python requirements and rebuild only when definitions changed; `-ForceSync` provides a complete recovery synchronization without touching user workspace data.

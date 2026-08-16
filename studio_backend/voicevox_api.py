@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from studio_backend.audio_utils import read_mono_audio, resample_linear
-from studio_backend.models import SynthesisPayload
+from studio_backend.profile_synthesis import build_profile_synthesis_payload
 from studio_backend.voice_profiles import VoiceProfileStore
 
 ADAPTER_VERSION = "1.0.0"
@@ -81,31 +81,6 @@ def _render_wav(path: Path, query: AudioQuery) -> bytes:
     buffer = io.BytesIO()
     sf.write(buffer, output, target_rate, format="WAV", subtype="PCM_16")
     return buffer.getvalue()
-
-
-def _profile_payload(profile: dict[str, Any], query: AudioQuery, text: str) -> SynthesisPayload:
-    # The profile speed is exposed as AudioQuery.speedScale.  Use the value sent
-    # back by the client directly so a round trip does not apply it twice.
-    speed = max(0.5, min(float(query.speedScale), 2.0))
-    source_type = profile.get("source_type", "none")
-    return SynthesisPayload.model_validate(
-        {
-            "line_id": f"voicevox-{uuid.uuid4().hex}",
-            "text": text,
-            "caption": profile.get("default_caption") or None,
-            "ref_wavs": profile.get("ref_wavs", []) if source_type == "reference" else [],
-            "ref_embed": profile.get("ref_embed") if source_type == "speaker" else None,
-            "no_ref": source_type == "none",
-            "lora_adapter": profile.get("lora_adapter") or None,
-            "speed": speed,
-            "num_steps": profile.get("num_steps", 12),
-            "seed": profile.get("seed"),
-            "cfg_scale_text": profile.get("cfg_scale_text", 3.0),
-            "cfg_scale_caption": profile.get("cfg_scale_caption", 3.0),
-            "cfg_scale_speaker": profile.get("cfg_scale_speaker", 5.0),
-            "trim_tail": True,
-        }
-    )
 
 
 def _speaker_groups(store: VoiceProfileStore) -> list[dict[str, Any]]:
@@ -323,7 +298,16 @@ def create_voicevox_app(
         if active >= max_queue:
             raise HTTPException(status_code=429, detail="Synthesis queue is full")
 
-        job = engine.create_job(_profile_payload(profile, query, text))
+        # AudioQuery.speedScale already contains the profile speed. Reusing it
+        # directly prevents applying the profile speed twice on round trips.
+        job = engine.create_job(
+            build_profile_synthesis_payload(
+                profile,
+                text,
+                line_id=f"voicevox-{uuid.uuid4().hex}",
+                speed=query.speedScale,
+            )
+        )
         try:
             result = engine.wait_for_job(job["id"], timeout=300.0)
         except TimeoutError as exc:

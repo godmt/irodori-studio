@@ -61,6 +61,25 @@ class SynthesisPayload(BaseModel):
         return value
 
 
+class SynthesisPlanRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class ProfileSynthesisRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    line_id: str | None = Field(default=None, max_length=160)
+    caption: str | None = Field(default=None, max_length=1000)
+    num_steps: int | None = Field(default=None, ge=1, le=120)
+    seed: int | None = None
+
+    @field_validator("caption", mode="before")
+    @classmethod
+    def empty_caption_to_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
 class ProjectSaveRequest(NamedRequest):
     name: str = Field(min_length=1, max_length=120)
     project: dict[str, Any]

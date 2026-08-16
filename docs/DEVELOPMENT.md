@@ -18,7 +18,8 @@ Do not copy `irodori_tts/`, checkpoints, training outputs, private recordings, o
 - `server.py` inserts that root into `sys.path` before importing `irodori_tts`.
 - `StudioEngine` owns one resident `IrodoriInferenceRuntime` and one FIFO generation worker.
 - Studio HTTP and VOICEVOX compatibility HTTP share the same `StudioEngine`.
-- Unless an explicit duration is requested, `StudioEngine` splits long synthesis text at Japanese sentence or punctuation boundaries with a 64-character segment bound, generates segments sequentially through the resident runtime, inserts 160 ms joins and persists one combined WAV plus aggregate and per-segment metadata. Cancellation is checked between segments. Explicit-duration synthesis remains one segment because independently fixing each segment duration would change the request contract.
+- Voice Library-backed Studio requests and VOICEVOX-compatible requests both resolve source assets, speed, seed and CFG values through `profile_synthesis.py` before entering `StudioEngine`; clients must not reconstruct a second copy of that mapping.
+- Unless an explicit duration is requested, `StudioEngine` splits long synthesis text at Japanese sentence or punctuation boundaries with a 64-character segment bound, generates segments sequentially through the resident runtime, inserts 160 ms joins and persists one combined WAV plus aggregate and per-segment metadata. Cancellation is checked between segments. Explicit-duration synthesis remains one segment because independently fixing each segment duration would change the request contract. Live obtains its plan from the same splitter and uses independent asynchronous producer and consumer loops: the producer submits every bounded profile-backed job sequentially without waiting for playback, while the consumer starts each resolved audio file in FIFO order. The resident Python worker and browser media pipeline therefore overlap without running model inference concurrently on the same GPU.
 - The frontend communicates only with the local Studio HTTP API.
 - Script and Live prime browser media playback from the initiating user gesture before asynchronous synthesis. A failed non-default output is retried once on the system output; autoplay denial remains a visible, retryable playback failure and does not discard the completed generation.
 - Recorder microphone capture happens in the browser, then accepted and review recordings are saved through the local Studio HTTP API under ignored `workspace/recordings/`.
@@ -39,6 +40,7 @@ src/
   project-state.js       Pure line, take and ordering operations
   emoji-data.js          Official Irodori performance emoji metadata
   voice-library.js       Server profile/project voice reconciliation and payload mapping
+  features/live/         Independent ordered Live synthesis producer and playback consumer
   features/recorder/     Corpus UI, microphone capture, WAV conversion and named dataset management
   features/training/     Guided Speaker Inversion/LoRA setup, progress and model history
 studio_backend/
@@ -48,6 +50,7 @@ studio_backend/
   audio_utils.py         Shared mono loading and deterministic linear resampling
   dataset_preprocessing.py Versioned method-independent dataset audio pipeline
   engine.py              Resident runtime and FIFO synthesis queue
+  profile_synthesis.py  Shared Voice Library profile-to-engine request resolver
   text_segmentation.py   Sentence-aware bounded synthesis segmentation
   models.py              HTTP request schemas
   exporter.py            WAV/subtitle/timeline production ZIP

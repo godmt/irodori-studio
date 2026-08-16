@@ -38,6 +38,8 @@ export const api = {
   loadModel: (payload) => request("/api/model/load", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
   unloadModel: () => request("/api/model/unload", { method: "POST" }).then((response) => response.json()),
   synthesize: (payload) => request("/api/synthesis", { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
+  synthesisPlan: (text) => request("/api/synthesis/plan", { method: "POST", body: JSON.stringify({ text }) }).then((response) => response.json()),
+  synthesizeVoiceProfile: (profileId, payload) => request(`/api/voice-profiles/${encodeURIComponent(profileId)}/synthesis`, { method: "POST", body: JSON.stringify(payload) }).then((response) => response.json()),
   job: (id) => request(`/api/jobs/${id}`).then((response) => response.json()),
   jobs: () => request("/api/jobs").then((response) => response.json()),
   cancelJob: (id) => request(`/api/jobs/${id}/cancel`, { method: "POST" }).then((response) => response.json()),

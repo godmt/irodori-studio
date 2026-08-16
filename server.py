@@ -51,18 +51,22 @@ from studio_backend.models import (
     JobResumeRequest,
     ModelLoadRequest,
     ProductionExportRequest,
+    ProfileSynthesisRequest,
     ProjectRenameRequest,
     ProjectSaveRequest,
     RecordingDatasetCreateRequest,
     RecordingDatasetRenameRequest,
     RecordingReviewRequest,
     SynthesisPayload,
+    SynthesisPlanRequest,
     TrainedModelRenameRequest,
     TrainingJobCreateRequest,
     VoiceProfileRequest,
 )
+from studio_backend.profile_synthesis import build_profile_synthesis_payload
 from studio_backend.project_store import ProjectStore, project_audio_files
 from studio_backend.recording_datasets import RecordingDatasetStore
+from studio_backend.text_segmentation import split_synthesis_text
 from studio_backend.training_jobs import TrainingJobManager
 from studio_backend.voice_profiles import VoiceProfileStore, migrate_voice_profile_store
 from studio_backend.voicevox_api import create_voicevox_app
@@ -104,7 +108,7 @@ voicevox_runtime: dict[str, Any] = {
     "port": 50021,
 }
 gpu_job_launch_lock = threading.RLock()
-app = FastAPI(title="Irodori Studio Local API", version="0.3.0")
+app = FastAPI(title="Irodori Studio Local API", version="0.4.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -264,6 +268,34 @@ def synthesize(payload: SynthesisPayload) -> dict[str, Any]:
     if not engine.status().get("loaded"):
         raise HTTPException(status_code=409, detail="モデルを先にロードしてください")
     return engine.create_job(payload)
+
+
+@app.post("/api/synthesis/plan")
+def plan_synthesis(request: SynthesisPlanRequest) -> dict[str, Any]:
+    segments = split_synthesis_text(request.text)
+    return {"segments": segments, "segment_count": len(segments)}
+
+
+@app.post("/api/voice-profiles/{profile_id}/synthesis", status_code=202)
+def synthesize_voice_profile(
+    profile_id: str, request: ProfileSynthesisRequest
+) -> dict[str, Any]:
+    if not engine.status().get("loaded"):
+        raise HTTPException(status_code=409, detail="モデルを先にロードしてください")
+    try:
+        profile = voice_profile_store.get(profile_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="ボイスが見つかりません") from exc
+    return engine.create_job(
+        build_profile_synthesis_payload(
+            profile,
+            request.text,
+            line_id=request.line_id,
+            caption=request.caption,
+            num_steps=request.num_steps,
+            seed=request.seed,
+        )
+    )
 
 
 @app.get("/api/jobs")
